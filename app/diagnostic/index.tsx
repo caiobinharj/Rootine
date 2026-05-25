@@ -89,13 +89,19 @@ export default function DiagnosticScreen() {
             time_availability: updatedAnswers.time_availability,
           };
 
-          const { error } = await supabase
-            .from("profiles")
-            .update({
+          const { error } = await supabase.from("profiles").upsert(
+            {
+              id: user.id,
+              nome:
+                (user.user_metadata?.name as string | undefined) ||
+                user.email?.split("@")[0] ||
+                "Guardião",
+              xp: 1,
               socioeconomic_context: socioContext,
               onboarding_completed: true,
-            })
-            .eq("id", user.id);
+            },
+            { onConflict: "id" },
+          );
 
           if (error) throw error;
 

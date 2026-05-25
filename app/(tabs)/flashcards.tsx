@@ -60,6 +60,8 @@ export default function FlashcardsTab() {
   const [quiz, setQuiz] = useState<TrailQuiz | null>(null);
   const [quizLoading, setQuizLoading] = useState(false);
   const [quizResult, setQuizResult] = useState<string | null>(null);
+  const [selectedOption, setSelectedOption] = useState<string | null>(null);
+  const [quizSaving, setQuizSaving] = useState(false);
   const isInitialized = useRef(false);
   const completeBatchCalledRef = useRef(false);
 
@@ -216,11 +218,16 @@ export default function FlashcardsTab() {
         body: { userId },
       });
       if (error) throw error;
-      setQuiz(data.quiz);
+      setQuiz({
+        ...data.quiz,
+        persisted: data.persisted !== false && !String(data.quiz?.id ?? "").startsWith("local-"),
+      });
+      setSelectedOption(null);
     } catch (error) {
       console.error("[TRILHA] Erro ao gerar quiz:", error);
       const detail = error instanceof Error ? error.message : String(error);
       setQuiz(buildLocalQuiz());
+      setSelectedOption(null);
       setQuizResult(
         `A função do Guardião não respondeu, então gerei um quiz local para teste. Detalhe: ${detail}`,
       );
@@ -231,35 +238,80 @@ export default function FlashcardsTab() {
 
   const handleAnswerQuiz = useCallback(
     async (optionId: string) => {
-      if (!userId || !quiz || quizResult) return;
+      if (!userId || !quiz || quizResult || quizSaving) return;
+
+      setQuizSaving(true);
+      setSelectedOption(optionId);
+
       const correct = optionId === quiz.correct_option;
-      setQuizResult(
-        correct
-          ? `Resposta correta. ${quiz.explanation}`
-          : `Resposta para revisar. ${quiz.explanation}`,
-      );
+      let quizId = quiz.id;
 
-      if (quiz.persisted === false || quiz.id.startsWith("local-")) {
-        return;
-      }
+      try {
+        if (quiz.persisted === false || quiz.id.startsWith("local-")) {
+          const { data: savedQuiz, error: quizInsertError } = await supabase
+            .from("quizzes")
+            .insert({
+              user_id: userId,
+              question: quiz.question,
+              options: quiz.options,
+              correct_option: quiz.correct_option,
+              explanation: quiz.explanation,
+              category: quiz.category,
+            })
+            .select("id")
+            .single();
 
-      const { error } = await supabase.from("user_quiz_answers").insert({
-        user_id: userId,
-        quiz_id: quiz.id,
-        selected_option: optionId,
-        correct,
-      });
+          if (quizInsertError) throw quizInsertError;
+          quizId = savedQuiz.id;
+          setQuiz((current) =>
+            current ? { ...current, id: quizId, persisted: true } : current,
+          );
+        }
 
-      if (!error) {
+        const { error: answerError } = await supabase.from("user_quiz_answers").insert({
+          user_id: userId,
+          quiz_id: quizId,
+          selected_option: optionId,
+          correct,
+        });
+
+        if (answerError) throw answerError;
+
+        setQuizResult(
+          correct
+            ? `Resposta correta. ${quiz.explanation}`
+            : `Resposta para revisar. A correta era ${quiz.correct_option}. ${quiz.explanation}`,
+        );
+
         supabase.functions
           .invoke("sync-user-brain", {
-            body: { userId, event_type: "QUIZ_COMPLETED", quizId: quiz.id },
+            body: { userId, event_type: "QUIZ_COMPLETED", quizId },
           })
           .catch((err) => console.error("[TRILHA] Brain sync quiz error:", err));
+      } catch (error) {
+        console.error("[TRILHA] Erro ao salvar resposta do quiz:", error);
+        const detail = error instanceof Error ? error.message : String(error);
+        setQuizResult(`Não foi possível registrar sua resposta: ${detail}`);
+      } finally {
+        setQuizSaving(false);
       }
     },
-    [quiz, quizResult, userId],
+    [quiz, quizResult, quizSaving, userId],
   );
+
+  const getQuizOptionStyle = (optionId: string) => {
+    if (!selectedOption) return styles.quizOption;
+
+    if (optionId === quiz?.correct_option) {
+      return [styles.quizOption, styles.quizOptionCorrect];
+    }
+
+    if (optionId === selectedOption) {
+      return [styles.quizOption, styles.quizOptionWrong];
+    }
+
+    return [styles.quizOption, styles.quizOptionMuted];
+  };
 
   const renderQuizPanel = () => (
     <View style={styles.quizPanel}>
@@ -284,15 +336,18 @@ export default function FlashcardsTab() {
           {quiz.options.map((option) => (
             <TouchableOpacity
               key={option.id}
-              style={styles.quizOption}
+              style={getQuizOptionStyle(option.id)}
               onPress={() => handleAnswerQuiz(option.id)}
-              disabled={!!quizResult}
+              disabled={!!quizResult || quizSaving}
             >
               <Text style={styles.quizOptionText}>
                 {option.id}. {option.text}
               </Text>
             </TouchableOpacity>
           ))}
+          {quizSaving && !quizResult ? (
+            <ActivityIndicator color="#7B1FA2" style={{ marginTop: 8 }} />
+          ) : null}
           {quizResult && <Text style={styles.quizResult}>{quizResult}</Text>}
           {quizResult && (
             <TouchableOpacity
@@ -300,6 +355,7 @@ export default function FlashcardsTab() {
               onPress={() => {
                 setQuiz(null);
                 setQuizResult(null);
+                setSelectedOption(null);
               }}
             >
               <Text style={styles.quizButtonText}>Novo quiz</Text>
@@ -338,8 +394,15 @@ export default function FlashcardsTab() {
         <Text style={styles.bigEmoji}>🎉</Text>
         <Text style={styles.messageTitle}>Parabéns!</Text>
         <Text style={styles.messageSubtitle}>
-          Você já respondeu seus flashcards hoje.{"\n"}Volte amanhã para um novo lote!
+          Você concluiu este lote. Pode praticar de novo quando quiser!
         </Text>
+        <TouchableOpacity
+          style={styles.startButton}
+          onPress={handleRequestBatch}
+          activeOpacity={0.8}
+        >
+          <Text style={styles.startButtonText}>Praticar mais 🃏</Text>
+        </TouchableOpacity>
         {nextBatchAt && (
           <View style={styles.countdownBox}>
             <Text style={styles.countdownLabel}>Próximo lote em:</Text>
@@ -492,6 +555,9 @@ const styles = StyleSheet.create({
     padding: 12,
     marginBottom: 8,
   },
+  quizOptionCorrect: { backgroundColor: "#C8E6C9", borderWidth: 2, borderColor: "#2E7D32" },
+  quizOptionWrong: { backgroundColor: "#FFCDD2", borderWidth: 2, borderColor: "#C62828" },
+  quizOptionMuted: { opacity: 0.55 },
   quizOptionText: { color: "#4A148C", fontWeight: "600" },
   quizResult: { color: "#2E7D32", lineHeight: 20, marginTop: 8, fontWeight: "600" },
 });

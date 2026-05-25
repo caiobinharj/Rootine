@@ -14,6 +14,52 @@ import {
   View,
 } from "react-native";
 
+function getAuthErrorMessage(error: unknown, isSignUp: boolean) {
+  const message =
+    error instanceof Error
+      ? error.message
+      : typeof error === "object" && error && "message" in error
+        ? String((error as { message?: string }).message)
+        : "Não foi possível autenticar agora.";
+
+  const code =
+    typeof error === "object" && error && "code" in error
+      ? String((error as { code?: string }).code)
+      : "";
+
+  if (code === "over_email_send_rate_limit" || message.includes("rate limit")) {
+    return "Muitas tentativas de cadastro em pouco tempo. Aguarde cerca de 1 hora e tente novamente.";
+  }
+
+  if (message.includes("Invalid login credentials")) {
+    return isSignUp
+      ? "Não foi possível concluir o cadastro. Tente outro e-mail ou faça login se a conta já existir."
+      : "E-mail ou senha incorretos. Se você acabou de migrar de projeto Supabase, cadastre-se de novo neste ambiente.";
+  }
+
+  if (message.includes("Email not confirmed")) {
+    return "Confirme seu e-mail antes de entrar. Verifique a caixa de entrada e o spam.";
+  }
+
+  if (message.includes("User already registered")) {
+    return "Este e-mail já está cadastrado. Use a opção Entrar.";
+  }
+
+  if (message.includes("Password should be at least")) {
+    return "A senha precisa ter pelo menos 6 caracteres.";
+  }
+
+  if (
+    message.includes("fetch") ||
+    message.includes("Failed to send") ||
+    message.includes("Network")
+  ) {
+    return "Falha de conexão com o Supabase. Teste outra rede, VPN ou aguarde alguns minutos.";
+  }
+
+  return message;
+}
+
 export default function AuthScreen() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
@@ -55,6 +101,22 @@ export default function AuthScreen() {
 
         console.log("[AUTH] Cadastro concluído com sucesso:", data.user?.id);
 
+        if (data.user) {
+          const { error: profileError } = await supabase.from("profiles").upsert(
+            {
+              id: data.user.id,
+              nome: fullName.trim() || data.user.email?.split("@")[0] || "Guardião",
+              xp: 1,
+              onboarding_completed: false,
+            },
+            { onConflict: "id" },
+          );
+
+          if (profileError) {
+            console.error("[AUTH] Erro ao criar perfil:", profileError.message);
+          }
+        }
+
         // Feedback caso o e-mail de confirmação esteja ligado no dashboard
         if (!data.session) {
           Alert.alert(
@@ -76,9 +138,10 @@ export default function AuthScreen() {
         console.log("[AUTH] Login realizado com sucesso.");
         // O _layout.tsx detectará a sessão e enviará o usuário para a Home (/).
       }
-    } catch (error: any) {
-      console.error("[AUTH ERROR]:", error.message);
-      Alert.alert("Erro na Autenticação", error.message);
+    } catch (error: unknown) {
+      const friendlyMessage = getAuthErrorMessage(error, isSignUp);
+      console.error("[AUTH ERROR]:", friendlyMessage, error);
+      Alert.alert("Erro na Autenticação", friendlyMessage);
     } finally {
       setLoading(false);
     }

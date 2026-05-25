@@ -218,6 +218,11 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
   requestNewBatch: async (userId: string) => {
     set({ loading: true });
     try {
+      await supabase
+        .from("profiles")
+        .update({ daily_flashcards_completed: false })
+        .eq("id", userId);
+
       const { data, error } = await supabase.functions.invoke(
         "generate-batch",
         {

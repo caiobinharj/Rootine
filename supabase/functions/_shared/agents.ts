@@ -90,6 +90,39 @@ export function parseJsonObject<T extends Record<string, unknown>>(
   }
 }
 
+function buildFallbackResult<T extends Record<string, unknown>>(
+  role: AgentRole,
+  fallback: T,
+  error: unknown,
+): T {
+  const message = error instanceof Error ? error.message : String(error);
+  const isQuotaError =
+    message.includes("insufficient_quota") ||
+    message.includes("exceeded your current quota") ||
+    message.includes("Error OpenAI: 429");
+
+  if (isQuotaError) {
+    return {
+      ...fallback,
+      answer:
+        "A cota da OpenAI deste projeto acabou. Adicione créditos em platform.openai.com, atualize a chave com `npx supabase secrets set OPEN_AI_KEY=...` e tente novamente.",
+      _fallback_reason: "openai_quota",
+    } as T;
+  }
+
+  if (message.includes("OPENAI_API_KEY") || message.includes("OPEN_AI_KEY")) {
+    return {
+      ...fallback,
+      answer:
+        "A chave da OpenAI não está configurada nas Edge Functions. Rode `npx supabase secrets set OPEN_AI_KEY=sua_chave`.",
+      _fallback_reason: "missing_openai_key",
+    } as T;
+  }
+
+  console.warn(`[AGENTS] ${role} failed; using fallback output:`, error);
+  return fallback as T;
+}
+
 export async function runJsonAgent<T extends Record<string, unknown>>({
   role,
   task,
@@ -104,25 +137,48 @@ ${JSON.stringify(context, null, 2)}
 
 Return STRICTLY valid JSON. Do not wrap it in markdown.`);
 
-    return parseJsonObject<T>(raw, fallback as T);
+    const parsed = parseJsonObject<T>(raw, fallback as T);
+    if (parsed === fallback) {
+      console.warn(`[AGENTS] ${role} returned unparsable JSON; using fallback output`);
+    }
+    return parsed;
   } catch (error) {
-    console.warn(`[AGENTS] ${role} failed; using fallback output:`, error);
-    return fallback as T;
+    return buildFallbackResult(role, fallback as T, error);
   }
 }
 
 async function runAgentText(role: AgentRole, input: string): Promise<string> {
-  const apiKey = Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY");
-  if (!apiKey) {
-    throw new Error("OPENAI_API_KEY ou OPEN_AI_KEY não configurada.");
+  const openAiKey = Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY");
+  const groqKey = Deno.env.get("GROQ_API_KEY");
+  let lastError: unknown = null;
+
+  if (openAiKey) {
+    try {
+      return await runAgentSdk(role, input, openAiKey);
+    } catch (error) {
+      console.warn("[AGENTS] OpenAI SDK unavailable, trying HTTP:", error);
+      lastError = error;
+    }
+
+    try {
+      return await runAgentHttp(role, input, openAiKey, "openai");
+    } catch (error) {
+      console.warn("[AGENTS] OpenAI HTTP failed:", error);
+      lastError = error;
+    }
   }
 
-  try {
-    return await runAgentSdk(role, input, apiKey);
-  } catch (error) {
-    console.warn("[AGENTS] SDK unavailable, falling back to HTTP:", error);
-    return await runAgentHttp(role, input, apiKey);
+  if (groqKey) {
+    try {
+      return await runAgentHttp(role, input, groqKey, "groq");
+    } catch (error) {
+      console.warn("[AGENTS] Groq HTTP failed:", error);
+      lastError = error;
+    }
   }
+
+  if (lastError instanceof Error) throw lastError;
+  throw new Error("Configure OPEN_AI_KEY ou GROQ_API_KEY nas secrets do Supabase.");
 }
 
 async function runAgentSdk(role: AgentRole, input: string, apiKey: string) {
@@ -144,11 +200,21 @@ async function runAgentSdk(role: AgentRole, input: string, apiKey: string) {
   return String(result.finalOutput ?? "");
 }
 
-async function runAgentHttp(role: AgentRole, input: string, apiKey: string) {
-  const model = Deno.env.get("OPENAI_MODEL") ?? DEFAULT_MODEL;
+async function runAgentHttp(
+  role: AgentRole,
+  input: string,
+  apiKey: string,
+  provider: "openai" | "groq",
+) {
   const config = AGENTS[role];
+  const model = provider === "groq"
+    ? Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile"
+    : Deno.env.get("OPENAI_MODEL") ?? DEFAULT_MODEL;
+  const url = provider === "groq"
+    ? "https://api.groq.com/openai/v1/chat/completions"
+    : "https://api.openai.com/v1/chat/completions";
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
@@ -166,7 +232,7 @@ async function runAgentHttp(role: AgentRole, input: string, apiKey: string) {
 
   if (!response.ok) {
     const errorText = await response.text();
-    throw new Error(`Erro OpenAI: ${response.status} - ${errorText}`);
+    throw new Error(`Erro ${provider}: ${response.status} - ${errorText}`);
   }
 
   const data = await response.json();

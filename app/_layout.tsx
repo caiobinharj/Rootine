@@ -4,6 +4,16 @@ import { Stack, useRouter, useSegments } from "expo-router";
 import { useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 
+function isNetworkAuthError(message?: string) {
+  if (!message) return false;
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("fetch") ||
+    normalized.includes("network") ||
+    normalized.includes("failed to send")
+  );
+}
+
 export default function RootLayout() {
   const [session, setSession] = useState<Session | null>(null);
   const [isReady, setIsReady] = useState(false);
@@ -50,10 +60,14 @@ export default function RootLayout() {
   // Função isolada e com tratamento de erro (Evita o 406)
   const checkDiagnosticStatus = async (userId: string) => {
     try {
-      // Usamos getUser() para garantir que a sessão é válida no servidor
       const { data: { user }, error: authError } = await supabase.auth.getUser();
-      
+
       if (authError || !user) {
+        if (isNetworkAuthError(authError?.message) && session) {
+          router.replace("/diagnostic");
+          return;
+        }
+
         console.error("Sessão inválida:", authError);
         await supabase.auth.signOut();
         router.replace("/auth");
@@ -67,7 +81,11 @@ export default function RootLayout() {
         .maybeSingle();
 
       if (error) {
-        // Se for erro de permissão (403/401), desloga
+        if (isNetworkAuthError(error.message)) {
+          router.replace("/diagnostic");
+          return;
+        }
+
         if (error.code === "42501" || error.message.includes("JWT")) {
           await supabase.auth.signOut();
           router.replace("/auth");
@@ -85,7 +103,9 @@ export default function RootLayout() {
       }
     } catch (e) {
       console.error("Erro ao verificar diagnóstico:", e);
-      // Evita loop: se der erro, não tenta redirecionar se já estivermos em algum lugar seguro
+      if (session) {
+        router.replace("/diagnostic");
+      }
     }
   };
 

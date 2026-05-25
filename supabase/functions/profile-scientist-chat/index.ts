@@ -81,12 +81,16 @@ Expected JSON:
       },
     }) as any;
 
+    const usedFallback = Boolean(aiResult?._fallback_reason);
+
     await logAgentInteraction(supabaseAdmin, {
       userId,
       agent: "scientist",
       eventType: "SCIENTIST_CHAT",
       inputSummary: { message },
       output: aiResult,
+      status: usedFallback ? "error" : "success",
+      errorMessage: usedFallback ? String(aiResult._fallback_reason) : undefined,
     });
 
     return jsonResponse({ success: true, ...aiResult });

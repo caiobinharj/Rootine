@@ -64,20 +64,22 @@ serve(async (req: Request) => {
       );
     }
 
-    // 4. Selecionar flashcards aleatórios
-    const { data: flashcards, error: flashErr } = await supabaseAdmin
+    // 4. Selecionar flashcards aleatórios do banco ampliado
+    const { data: allFlashcards, error: flashErr } = await supabaseAdmin
       .from("flashcards")
-      .select("id, question")
-      .limit(BATCH_SIZE);
+      .select("id, question");
 
     if (flashErr)
       throw new Error(`Erro ao buscar flashcards: ${flashErr.message}`);
 
-    if (!flashcards || flashcards.length === 0) {
+    if (!allFlashcards || allFlashcards.length === 0) {
       throw new Error(
         "Nenhum flashcard disponível no banco. Insira perguntas na tabela 'flashcards'.",
       );
     }
+
+    const shuffled = [...allFlashcards].sort(() => Math.random() - 0.5);
+    const flashcards = shuffled.slice(0, Math.min(BATCH_SIZE, shuffled.length));
 
     console.log(`[BATCH] ${flashcards.length} flashcards selecionados`);
 
