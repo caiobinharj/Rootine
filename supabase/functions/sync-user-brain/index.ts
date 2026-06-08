@@ -15,6 +15,12 @@ import {
   jsonResponse,
   requireUserIdFromJwt,
 } from "../_shared/supabase-admin.ts";
+import {
+  awardXpLedger,
+  getMissionXpReward,
+  logMissionImpact,
+  unlockEligibleAchievements,
+} from "../_shared/progress.ts";
 
 const BRAIN_SCHEMA_VERSION = 1;
 const BRAIN_ALGORITHM_VERSION = "deterministic_brain_v1";
@@ -68,6 +74,8 @@ interface ProcessResult {
   factsWritten: number;
   factsSkipped: number;
   notes: string[];
+  xp?: unknown;
+  impact?: unknown;
 }
 
 function emptyAffinities() {
@@ -646,9 +654,27 @@ async function processMissionAction(
   if (!mission) throw new Error("Missão não encontrada para o usuário.");
 
   const action = normalizeMissionAction(missionAction ?? mission.status);
+  const actionAppliedAt = new Date().toISOString();
+
+  if (action === "completed" && mission.status === "active") {
+    const { error: updateMissionError } = await supabaseAdmin
+      .from("user_missions")
+      .update({ status: "completed", completed_at: actionAppliedAt })
+      .eq("id", missionId)
+      .eq("user_id", userId)
+      .eq("status", "active");
+
+    if (updateMissionError) {
+      throw new Error(`Erro ao concluir missão: ${updateMissionError.message}`);
+    }
+
+    mission.status = "completed";
+    mission.completed_at = actionAppliedAt;
+  }
+
   const occurredAt = action === "completed" && mission.completed_at
     ? mission.completed_at
-    : new Date().toISOString();
+    : actionAppliedAt;
 
   const event = await insertProfileEvent(supabaseAdmin, {
     userId,
@@ -677,11 +703,39 @@ async function processMissionAction(
   const fact = buildMissionFact(mission, action, event.id, occurredAt);
   await upsertFact(supabaseAdmin, userId, fact);
 
+  let xp: unknown = null;
+  let impact: unknown = null;
+  if (action === "completed") {
+    const xpReward = getMissionXpReward(mission.difficulty);
+    xp = await awardXpLedger(supabaseAdmin, {
+      userId,
+      sourceType: "mission_completed",
+      sourceId: missionId,
+      reason: `Missao concluida dificuldade ${numberValue(mission.difficulty, 1)}`,
+      requestedXp: xpReward,
+      idempotencyKey: `mission_completed:${missionId}`,
+      metadata: {
+        mission_type: mission.mission_type ?? "daily",
+        category: mission.category ?? null,
+        difficulty: mission.difficulty ?? null,
+        pattern_key: mission.pattern_key ?? null,
+      },
+    });
+    impact = await logMissionImpact(supabaseAdmin, { userId, mission });
+  }
+
   return {
     eventId: event.id,
     factsWritten: 1,
     factsSkipped: 0,
-    notes: [`action:${action}`, `hard_block:false`],
+    notes: [
+      `action:${action}`,
+      `hard_block:false`,
+      action === "completed" ? "xp_checked:true" : "xp_checked:false",
+      action === "completed" ? "impact_checked:true" : "impact_checked:false",
+    ],
+    xp,
+    impact,
   };
 }
 
@@ -970,6 +1024,7 @@ serve(async (req: Request) => {
       userId,
       profile.socioeconomic_context,
     );
+    const achievements = await unlockEligibleAchievements(supabaseAdmin, userId, "sync-user-brain");
 
     console.log("[BRAIN] Agregação concluída.", {
       userId,
@@ -979,6 +1034,7 @@ serve(async (req: Request) => {
       factsSkipped: processResult.factsSkipped,
       factsCount: cacheResult.factsCount,
       eventsCount: cacheResult.eventsCount,
+      achievementsUnlocked: achievements.unlocked.length,
       notes: processResult.notes,
     });
 
@@ -994,6 +1050,9 @@ serve(async (req: Request) => {
         facts_count: cacheResult.factsCount,
         events_count: cacheResult.eventsCount,
       },
+      xp: processResult.xp ?? null,
+      impact: processResult.impact ?? null,
+      achievements,
       notes: processResult.notes,
     });
   } catch (error: any) {

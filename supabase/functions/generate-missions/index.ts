@@ -151,6 +151,40 @@ function timeBudgetFromProfile(profile: Record<string, unknown>, missionType: Mi
   return missionType === "specialized" ? Math.min(base * 2, 90) : base;
 }
 
+function missionWindowDays(missionType: MissionType) {
+  return missionType === "specialized" ? 7 : 1;
+}
+
+function normalizeClientRequestId(value: unknown) {
+  if (typeof value !== "string") return null;
+  const cleaned = value
+    .replace(/[^a-zA-Z0-9:._-]/g, "")
+    .slice(0, 120)
+    .trim();
+  return cleaned.length >= 12 ? cleaned : null;
+}
+
+async function findMissionByGenerationRequest(
+  supabaseAdmin: any,
+  userId: string,
+  generationRequestId: string | null,
+) {
+  if (!generationRequestId) return null;
+
+  const { data, error } = await supabaseAdmin
+    .from("user_missions")
+    .select("id, status, mission_type, category, pattern_key, action_fingerprint")
+    .eq("user_id", userId)
+    .eq("generation_request_id", generationRequestId)
+    .maybeSingle();
+
+  if (error) {
+    throw new Error(`Erro ao buscar geração idempotente: ${error.message}`);
+  }
+
+  return data ?? null;
+}
+
 function maxCostFromProfile(profile: Record<string, unknown>) {
   const context = asObject(profile.socioeconomic_context);
   const friction = String(context.financial_friction ?? "");
@@ -211,6 +245,7 @@ function rankPattern(input: {
   facts: ProfileFact[];
   recentMissions: any[];
   recentCategoryCounts: Record<string, number>;
+  activeCategoryCounts: Record<string, number>;
   recentPatternKeys: Set<string>;
   recentActionFingerprints: Set<string>;
   missionType: MissionType;
@@ -224,6 +259,7 @@ function rankPattern(input: {
     facts,
     recentMissions,
     recentCategoryCounts,
+    activeCategoryCounts,
     recentPatternKeys,
     recentActionFingerprints,
     missionType,
@@ -270,6 +306,15 @@ function rankPattern(input: {
 
   const categoryRepeatCount = recentCategoryCounts[pattern.category] ?? 0;
   score += Math.max(0, 6 - categoryRepeatCount * 2);
+
+  const activeCategoryCount = activeCategoryCounts[pattern.category] ?? 0;
+  if (activeCategoryCount > 0) {
+    score -= activeCategoryCount === 1
+      ? 18
+      : activeCategoryCount === 2
+        ? 50
+        : 95 + (activeCategoryCount - 3) * 35;
+  }
 
   const difficultyTarget = missionType === "specialized"
     ? Math.max(2, Math.min(maxDifficulty, 4))
@@ -349,13 +394,6 @@ function deriveActionFingerprint(pattern: Record<string, unknown>) {
     : "unknown.action";
 }
 
-function effortPhrase(minutes: number) {
-  if (minutes <= 5) return "em poucos minutos";
-  if (minutes <= 20) return `em cerca de ${minutes} minutos`;
-  if (minutes <= 60) return `em até ${minutes} minutos, sem pressa`;
-  return `ao longo de até ${minutes} minutos`;
-}
-
 function hasPositiveImpact(impact: Record<string, any>) {
   return Object.values(impact).some((range: any) =>
     Number(range?.mid ?? 0) > 0 || Number(range?.high ?? 0) > 0
@@ -410,6 +448,15 @@ function validateCandidate(
     text.includes("praticar hoje por pelo menos 10 minutos")
   ) {
     errors.push("generic_fallback_mission");
+  }
+
+  if (
+    text.includes("registre mentalmente o que funcionou") ||
+    text.includes("reserve em cerca de") ||
+    text.includes("nao compre nada para concluir") ||
+    text.includes("distribua ou repita a acao")
+  ) {
+    errors.push("mission_contains_boilerplate_suffix");
   }
 
   const harmful = [
@@ -484,8 +531,7 @@ function buildFallbackCandidate(
 
   return {
     title: pattern.fallback_title_pt,
-    description:
-      `${pattern.fallback_description_pt} Reserve ${effortPhrase(effortMinutes)} e não compre nada para concluir.`,
+    description: descriptionForMissionType(pattern, missionType),
     category: pattern.category,
     environmental_goal: pattern.environmental_goal,
     difficulty,
@@ -551,9 +597,29 @@ interface AiCompositionAttempt {
 
 function sanitizeAiText(value: unknown, fallback: string, maxLength: number) {
   if (typeof value !== "string") return fallback;
-  const trimmed = value.replace(/\s+/g, " ").trim();
+  const trimmed = stripGenericMissionBoilerplate(value).replace(/\s+/g, " ").trim();
   if (!trimmed) return fallback;
   return trimmed.slice(0, maxLength);
+}
+
+function stripGenericMissionBoilerplate(value: string) {
+  return value
+    .replace(/\s*Faça em um momento seguro da rotina e registre mentalmente o que funcionou\./gi, "")
+    .replace(/\s*Reserve em poucos minutos e não compre nada para concluir\./gi, "")
+    .replace(/\s*Reserve em cerca de \d+ minutos e não compre nada para concluir\./gi, "")
+    .replace(/\s*Reserve em até \d+ minutos, sem pressa e não compre nada para concluir\./gi, "")
+    .replace(/\s*Reserve ao longo de até \d+ minutos e não compre nada para concluir\./gi, "")
+    .replace(/\s*Distribua ou repita a ação ao longo de até 7 dias, acompanhando o que funcionou\./gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function descriptionForMissionType(pattern: PatternRow, missionType: MissionType) {
+  const cleanDescription = stripGenericMissionBoilerplate(pattern.fallback_description_pt);
+  if (missionType === "specialized" && cleanDescription.startsWith("Hoje, ")) {
+    return `Nesta semana, ${cleanDescription.slice("Hoje, ".length)}`;
+  }
+  return cleanDescription;
 }
 
 function buildAiCandidateFromBlueprint(
@@ -624,6 +690,8 @@ async function composeMissionCandidatesWithAi(
     effort_minutes: fallbackCandidate.effort_minutes,
     cost_level: fallbackCandidate.cost_level,
     xp_reward: fallbackCandidate.xp_reward,
+    mission_type: fallbackCandidate.mission_type,
+    mission_window_days: missionWindowDays(fallbackCandidate.mission_type),
     used_fact_keys: fallbackCandidate.used_fact_keys,
     personalization_slots: rankedPattern.pattern.personalization_slots,
     fallback_title_pt: rankedPattern.pattern.fallback_title_pt,
@@ -641,6 +709,8 @@ Regras:
 - Não altere categoria, action_fingerprint, objetivo ambiental, dificuldade, custo, tempo, XP, impacto ou facts fora dos recebidos.
 - Use somente used_fact_keys presentes no blueprint escolhido.
 - A descrição deve ser concreta, sustentável, segura, curta e não genérica.
+- Se o blueprint tiver mission_window_days = 7, escreva como missão semanal: algo para distribuir, repetir ou acompanhar ao longo da semana.
+- Não copie nem acrescente rodapés genéricos como "registre mentalmente o que funcionou", "não compre nada para concluir" ou "Distribua ou repita a ação".
 - Evite frases robóticas como "certifique-se de completar em até X minutos".
 - Evite justificativas genéricas como "seu nível de usuário"; cite limites, preferências ou fatos concretos do contexto.
 - Não invente restrições, dados médicos, custos, acesso doméstico ou fatos novos.
@@ -768,6 +838,7 @@ serve(async (req: Request) => {
     const body = await req.json();
     const userId = body.userId;
     const missionType: MissionType = isMissionType(body.missionType) ? body.missionType : "daily";
+    const generationRequestId = normalizeClientRequestId(body.clientRequestId ?? body.generationRequestId);
 
     if (!userId) {
       throw new Error("O parâmetro 'userId' é obrigatório no corpo da requisição.");
@@ -777,6 +848,34 @@ serve(async (req: Request) => {
     const supabaseAdmin = createSupabaseAdmin();
 
     console.log("[MISSION_GEN] Iniciando Trilha hiperpersonalizada.", { userId, missionType });
+
+    const existingMissionForRequest = await findMissionByGenerationRequest(
+      supabaseAdmin,
+      userId,
+      generationRequestId,
+    );
+
+    if (existingMissionForRequest) {
+      console.log("[MISSION_GEN] Requisição idempotente já atendida.", {
+        userId,
+        missionType,
+        generationRequestId,
+        missionId: existingMissionForRequest.id,
+      });
+
+      return jsonResponse({
+        success: true,
+        mission_id: existingMissionForRequest.id,
+        pattern_key: existingMissionForRequest.pattern_key ?? null,
+        action_fingerprint: existingMissionForRequest.action_fingerprint ?? null,
+        category: existingMissionForRequest.category ?? null,
+        mission_status: existingMissionForRequest.status,
+        mission_type: existingMissionForRequest.mission_type ?? missionType,
+        client_request_id: generationRequestId,
+        idempotent: true,
+        message: "mission_already_created",
+      });
+    }
 
     const { data: profile, error: profileError } = await supabaseAdmin
       .from("profiles")
@@ -793,7 +892,7 @@ serve(async (req: Request) => {
 
     const { data: activeMissions, error: activeError } = await supabaseAdmin
       .from("user_missions")
-      .select("id")
+      .select("id, category, pattern_key, action_fingerprint, title, description, created_at")
       .eq("user_id", userId)
       .eq("status", "active");
 
@@ -870,6 +969,12 @@ serve(async (req: Request) => {
       }
       return acc;
     }, {});
+    const activeCategoryCounts = (activeMissions ?? []).reduce((acc: Record<string, number>, mission: any) => {
+      if (typeof mission.category === "string") {
+        acc[mission.category] = (acc[mission.category] ?? 0) + 1;
+      }
+      return acc;
+    }, {});
 
     const ranked = typedPatterns
       .map((pattern) =>
@@ -879,6 +984,7 @@ serve(async (req: Request) => {
           facts,
           recentMissions: recentMissions ?? [],
           recentCategoryCounts,
+          activeCategoryCounts,
           recentPatternKeys,
           recentActionFingerprints,
           missionType,
@@ -904,6 +1010,7 @@ serve(async (req: Request) => {
       context_version: CONTEXT_VERSION,
       algorithm: ALGORITHM_VERSION,
       requested_at: startedAt,
+      client_request_id: generationRequestId,
       active_mission_count: activeMissionCount,
       profile: {
         user_level: userLevel,
@@ -921,6 +1028,7 @@ serve(async (req: Request) => {
         recent_pattern_keys: [...recentPatternKeys],
         recent_action_fingerprints: [...recentActionFingerprints],
         recent_categories: recentCategoryCounts,
+        active_categories: activeCategoryCounts,
       },
     };
 
@@ -971,6 +1079,7 @@ serve(async (req: Request) => {
           recent_pattern_keys: [...recentPatternKeys],
           recent_action_fingerprints: [...recentActionFingerprints],
           recent_categories: recentCategoryCounts,
+          active_categories: activeCategoryCounts,
         },
       })
       : {
@@ -1072,7 +1181,7 @@ serve(async (req: Request) => {
     }
 
     const missionId = crypto.randomUUID();
-    const expiresInHours = missionType === "specialized" ? 72 : 24;
+    const expiresInHours = missionWindowDays(missionType) * 24;
     const now = new Date().toISOString();
     const finalGenerationSnapshot = {
       ...generationSnapshot,
@@ -1118,6 +1227,7 @@ serve(async (req: Request) => {
       expected_impact: finalCandidate.expected_impact,
       pattern_key: finalCandidate.pattern_key,
       action_fingerprint: finalCandidate.action_fingerprint,
+      generation_request_id: generationRequestId,
       created_at: now,
       expires_at: new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString(),
     };
@@ -1125,6 +1235,36 @@ serve(async (req: Request) => {
     const { error: insertError } = await supabaseAdmin
       .from("user_missions")
       .insert(insertPayload);
+
+    if (insertError && generationRequestId && insertError.code === "23505") {
+      const existing = await findMissionByGenerationRequest(
+        supabaseAdmin,
+        userId,
+        generationRequestId,
+      );
+
+      if (existing) {
+        console.log("[MISSION_GEN] Conflito idempotente resolvido.", {
+          userId,
+          missionType,
+          generationRequestId,
+          missionId: existing.id,
+        });
+
+        return jsonResponse({
+          success: true,
+          mission_id: existing.id,
+          pattern_key: existing.pattern_key ?? null,
+          action_fingerprint: existing.action_fingerprint ?? null,
+          category: existing.category ?? null,
+          mission_status: existing.status,
+          mission_type: existing.mission_type ?? missionType,
+          client_request_id: generationRequestId,
+          idempotent: true,
+          message: "mission_already_created",
+        });
+      }
+    }
 
     if (insertError) {
       throw new Error(`Erro ao salvar missão: ${insertError.message}`);
@@ -1150,6 +1290,7 @@ serve(async (req: Request) => {
       eventType: "GENERATE_MISSION",
       inputSummary: {
         missionType,
+        generationRequestId,
         activeMissionCount,
         selectedPatternKey: selectedPattern.key,
         selectedActionFingerprint: finalCandidate.action_fingerprint,
@@ -1185,11 +1326,13 @@ serve(async (req: Request) => {
       blueprintCount: blueprints.length,
       aiCandidateCount: aiComposition.candidates.length,
       usedFallback,
+      generationRequestId,
     });
 
     return jsonResponse({
       success: true,
       mission_id: missionId,
+      client_request_id: generationRequestId,
       pattern_key: selectedPattern.key,
       action_fingerprint: finalCandidate.action_fingerprint,
       ai_used: usedAi,

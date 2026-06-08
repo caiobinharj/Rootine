@@ -2,7 +2,6 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import {
   ADVENTURE_ALGORITHM_VERSION,
   ADVENTURE_SCHEMA_VERSION,
-  awardXpWithDailyCap,
   buildFlashcardFact,
   FLASHCARD_ANSWER_XP,
   getFlashcardEffect,
@@ -14,6 +13,7 @@ import {
   jsonResponse,
   requireUserIdFromJwt,
 } from "../_shared/supabase-admin.ts";
+import { unlockEligibleAchievements } from "../_shared/progress.ts";
 
 interface AnswerAdventureCardPayload {
   userId: string;
@@ -138,27 +138,20 @@ serve(async (req: Request) => {
       factWritten = true;
     }
 
-    const xp = await awardXpWithDailyCap(supabaseAdmin, {
-      userId,
-      sourceType: "adventure_flashcard",
-      sourceId: answerId,
-      reason: answer === null
-        ? "Carta da Aventura pulada"
-        : "Carta da Aventura respondida",
-      requestedXp: answer === null ? 0 : FLASHCARD_ANSWER_XP,
-      idempotencyKey: `adventure_flashcard:${answerId}`,
-      metadata: {
-        answer,
-        category: flashcard.category,
-        signal_key: flashcard.signal_key,
-      },
-    });
+    const xp = {
+      xpGranted: answer === null ? 0 : FLASHCARD_ANSWER_XP,
+      capped: false,
+      alreadyAwarded: false,
+      ledgerId: null,
+    };
+    const achievements = await unlockEligibleAchievements(supabaseAdmin, userId, "answer-adventure-card");
 
     return jsonResponse({
       success: true,
       answer_id: answerId,
       fact_written: factWritten,
       xp,
+      achievements,
     });
   } catch (error: any) {
     console.error("[ADVENTURE] Erro ao responder carta:", error.message);

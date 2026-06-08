@@ -106,7 +106,7 @@ export default function AuthScreen() {
             {
               id: data.user.id,
               name: fullName.trim() || data.user.email?.split("@")[0] || "Guardião",
-              xp: 1,
+              xp: 0,
               onboarding_completed: false,
             },
             { onConflict: "id" },

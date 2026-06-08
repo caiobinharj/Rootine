@@ -1,7 +1,9 @@
 import TreeDisplay from "@/components/TreeDisplay";
+import { getLevelFromXp } from "@/lib/domain/xp";
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
-import React, { useCallback, useEffect, useState } from "react";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   Modal,
@@ -17,20 +19,6 @@ interface HabitatLeaf {
   title: string;
   message: string;
 }
-
-type TreePreview = {
-  id: string;
-  label: string;
-  xp: number;
-  vitality: number;
-};
-
-const TREE_PREVIEWS: TreePreview[] = [
-  { id: "real", label: "Real", xp: -1, vitality: -1 },
-  { id: "withered", label: "Ruim", xp: 18, vitality: 18 },
-  { id: "growing", label: "Média", xp: 62, vitality: 52 },
-  { id: "thriving", label: "Alta", xp: 130, vitality: 92 },
-];
 
 const FALLBACK_LEAVES: HabitatLeaf[] = [
   {
@@ -60,28 +48,32 @@ export default function HabitatScreen() {
   const [leaves, setLeaves] = useState<HabitatLeaf[]>(FALLBACK_LEAVES);
   const [selectedLeaf, setSelectedLeaf] = useState<HabitatLeaf | null>(null);
   const [loadingLeaves, setLoadingLeaves] = useState(false);
-  const [preview, setPreview] = useState<TreePreview>(TREE_PREVIEWS[0]);
+  const levelInfo = getLevelFromXp(xp || 0);
 
+  const impactPulse = Math.min(
+    45,
+    (impactTotals.water_l || 0) * 0.08 +
+      (impactTotals.co2_kg || 0) * 8 +
+      (impactTotals.waste_g || 0) * 0.015 +
+      (impactTotals.energy_kwh || 0) * 10,
+  );
   const vitalityScore = Math.max(
     0,
     Math.min(
       100,
       Math.round(
-        (xp || 0) * 0.35 +
-          (impactTotals.water_l || 0) * 0.2 +
-          (impactTotals.co2_kg || 0) * 4 +
-          (impactTotals.waste_g || 0) * 0.04,
+        (xp > 0 ? 20 : 8) +
+          levelInfo.progress * 35 +
+          impactPulse,
       ),
     ),
   );
   const vitalityLabel =
-    (preview.vitality >= 0 ? preview.vitality : vitalityScore) >= 70
-      ? "Copa radiante"
-      : (preview.vitality >= 0 ? preview.vitality : vitalityScore) >= 35
-        ? "Bosque em crescimento"
-        : "Solo pedindo cuidado";
-  const displayedVitality = preview.vitality >= 0 ? preview.vitality : vitalityScore;
-  const displayedXp = preview.xp >= 0 ? preview.xp : xp;
+    vitalityScore >= 70
+      ? "alta"
+      : vitalityScore >= 35
+        ? "em crescimento"
+        : "em recuperação";
 
   const loadLeaves = useCallback(async () => {
     setLoadingLeaves(true);
@@ -92,6 +84,9 @@ export default function HabitatScreen() {
       if (!user) return;
 
       await fetchProfile(user.id);
+      console.log("[HABITAT] Perfil do Habitat carregado:", {
+        userId: user.id,
+      });
 
       const { data, error } = await supabase.functions.invoke("habitat-leaves", {
         body: { userId: user.id },
@@ -109,9 +104,11 @@ export default function HabitatScreen() {
     }
   }, [fetchProfile]);
 
-  useEffect(() => {
-    loadLeaves();
-  }, [loadLeaves]);
+  useFocusEffect(
+    useCallback(() => {
+      loadLeaves();
+    }, [loadLeaves]),
+  );
 
   const handleLeafPress = (index: number) => {
     setSelectedLeaf(leaves[index] || FALLBACK_LEAVES[index]);
@@ -130,36 +127,19 @@ export default function HabitatScreen() {
       <View style={styles.treeContainer}>
         <TreeDisplay
           onLeafPress={handleLeafPress}
-          vitalityScore={displayedVitality}
-          previewXp={displayedXp}
+          vitalityScore={vitalityScore}
         />
       </View>
 
       <View style={styles.footer}>
-        <View style={styles.previewRow}>
-          {TREE_PREVIEWS.map((option) => (
-            <TouchableOpacity
-              key={option.id}
-              style={[
-                styles.previewButton,
-                preview.id === option.id && styles.previewButtonActive,
-              ]}
-              onPress={() => setPreview(option)}
-            >
-              <Text
-                style={[
-                  styles.previewButtonText,
-                  preview.id === option.id && styles.previewButtonTextActive,
-                ]}
-              >
-                {option.label}
-              </Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-        <Text style={styles.xpText}>{displayedXp} XP de harmonia</Text>
+        <Text style={styles.xpText}>
+          Nível {levelInfo.level} · {levelInfo.milestone}
+        </Text>
+        <Text style={styles.progressText}>
+          {xp || 0} XP · {Math.round(levelInfo.progress * 100)}% até o próximo marco
+        </Text>
         <Text style={styles.vitalityText}>
-          {vitalityLabel} • {displayedVitality}/100
+          Vitalidade atual: {vitalityLabel}
         </Text>
         {loadingLeaves ? <ActivityIndicator color="#2E7D32" /> : null}
       </View>
@@ -209,21 +189,8 @@ const styles = StyleSheet.create({
     paddingBottom: 18,
     paddingHorizontal: 20,
   },
-  previewRow: {
-    flexDirection: "row",
-    gap: 8,
-    marginBottom: 10,
-  },
-  previewButton: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 999,
-    paddingHorizontal: 14,
-    paddingVertical: 8,
-  },
-  previewButtonActive: { backgroundColor: "#2E7D32" },
-  previewButtonText: { color: "#607D8B", fontWeight: "bold", fontSize: 12 },
-  previewButtonTextActive: { color: "#FFFFFF" },
   xpText: { color: "#2E7D32", fontWeight: "bold" },
+  progressText: { color: "#455A64", marginTop: 4, fontWeight: "700" },
   vitalityText: { color: "#607D8B", marginTop: 4, fontWeight: "600" },
   modalOverlay: {
     flex: 1,

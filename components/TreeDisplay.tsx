@@ -1,4 +1,5 @@
 import { useEcoStore } from "@/store/useEcoStore";
+import { getLevelFromXp } from "@/lib/domain/xp";
 import React, { useEffect } from "react";
 import { StyleSheet, View } from "react-native";
 import Animated, {
@@ -48,14 +49,18 @@ export default function TreeDisplay({ onLeafPress, vitalityScore = 50, previewXp
   const progress = useSharedValue(0);
   const xp = useEcoStore((state: { xp: number }) => state.xp);
   const displayXp = previewXp ?? xp;
+  const levelProgress = getLevelFromXp(displayXp);
+  const structuralProgress = levelProgress.level >= 12
+    ? 1
+    : Math.min(1, Math.max(0.02, (levelProgress.level + levelProgress.progress) / 12));
   const normalizedScore = Math.max(0, Math.min(100, vitalityScore));
   const mood = normalizedScore >= 70 ? "thriving" : normalizedScore >= 35 ? "growing" : "withered";
   const palette = TREE_PALETTES[mood];
 
-  // XP define porte; pontuação define beleza/saúde.
+  // XP define porte por nível; pontuação define beleza/saúde.
   useEffect(() => {
-    progress.value = withTiming(Math.min(Math.max(displayXp, 1) / 120, 1), { duration: 1500 });
-  }, [displayXp, progress]);
+    progress.value = withTiming(structuralProgress, { duration: 1500 });
+  }, [structuralProgress, progress]);
 
   // =========================================================================
   // INTERPOLAÇÕES NATIVAS PURAS

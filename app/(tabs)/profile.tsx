@@ -14,6 +14,17 @@ import {
 
 type ProfileTab = "stats" | "achievements" | "history" | "scientist";
 
+type AchievementView = {
+  key: string;
+  title: string;
+  description: string;
+  xpReward: number;
+  grantedXp: number;
+  unlocked: boolean;
+  unlockedAt: string | null;
+  sortOrder: number;
+};
+
 function buildLocalScientistAnswer({
   message,
   missionsCount,
@@ -37,7 +48,7 @@ Para a sua pergunta: "${message}", recomendo um protocolo simples de 3 passos:
 
 1. Escolha uma ação ambiental pequena que caiba em menos de 10 minutos.
 2. Repita por 3 dias e marque mentalmente se foi fácil, difícil ou irrelevante.
-3. Se foi difícil, reduza a ação pela metade; se foi fácil, transforme em missão especializada.
+3. Se foi difícil, reduza a ação pela metade; se foi fácil, transforme em missão semanal.
 
 Esse modo local não usa IA remota, mas mantém a interação funcionando enquanto o Supabase Functions é configurado.`;
 }
@@ -47,6 +58,7 @@ export default function ProfileScreen() {
   const [missions, setMissions] = useState<any[]>([]);
   const [quizHistory, setQuizHistory] = useState<any[]>([]);
   const [flashcardHistory, setFlashcardHistory] = useState<any[]>([]);
+  const [achievementRows, setAchievementRows] = useState<AchievementView[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ProfileTab>("stats");
   const [scientistInput, setScientistInput] = useState("");
@@ -65,7 +77,14 @@ export default function ProfileScreen() {
       if (user) {
         await fetchProfile(user.id);
 
-        const [{ data: profile }, { data: missionRows }, { data: flashcardRows }] =
+        const [
+          { data: profile },
+          { data: missionRows },
+          { data: flashcardRows },
+          { data: achievementDefinitions },
+          { data: userAchievements },
+          { data: achievementXpRows },
+        ] =
           await Promise.all([
             supabase.from("profiles").select("*").eq("id", user.id).single(),
             supabase
@@ -80,7 +99,78 @@ export default function ProfileScreen() {
               .eq("user_id", user.id)
               .order("id", { ascending: false })
               .limit(12),
+            supabase
+              .from("achievement_definitions")
+              .select("key, title, description, xp_reward, sort_order")
+              .order("sort_order", { ascending: true }),
+            supabase
+              .from("user_achievements")
+              .select("achievement_key, unlocked_at, xp_ledger_id")
+              .eq("user_id", user.id),
+            supabase
+              .from("xp_ledger")
+              .select("id, reason, xp_delta, metadata, created_at")
+              .eq("user_id", user.id)
+              .eq("source_type", "achievement")
+              .order("created_at", { ascending: false }),
           ]);
+
+        const unlockedByKey = new Map<string, any>(
+          (userAchievements || [])
+            .filter((achievement: any) => typeof achievement.achievement_key === "string")
+            .map((achievement: any): [string, any] => [
+              achievement.achievement_key,
+              achievement,
+            ]),
+        );
+        const xpByLedgerId = new Map<string, any>(
+          (achievementXpRows || [])
+            .filter((row: any) => typeof row.id === "string")
+            .map((row: any): [string, any] => [row.id, row]),
+        );
+        const xpByAchievementKey = new Map<string, any>(
+          (achievementXpRows || [])
+            .filter((row: any) => typeof row.metadata?.achievement_key === "string")
+            .map((row: any): [string, any] => [row.metadata.achievement_key, row]),
+        );
+        const mergedAchievements = new Map<string, AchievementView>();
+
+        (achievementDefinitions || []).forEach((definition: any) => {
+          const unlocked = unlockedByKey.get(definition.key) as any;
+          const xpRow = unlocked?.xp_ledger_id
+            ? xpByLedgerId.get(unlocked.xp_ledger_id) as any
+            : xpByAchievementKey.get(definition.key) as any;
+          mergedAchievements.set(definition.key, {
+            key: definition.key,
+            title: definition.title,
+            description: definition.description,
+            xpReward: Number(definition.xp_reward ?? 0) || 0,
+            grantedXp: Number(xpRow?.xp_delta ?? definition.xp_reward ?? 0) || 0,
+            unlocked: Boolean(unlocked),
+            unlockedAt: unlocked?.unlocked_at ?? null,
+            sortOrder: Number(definition.sort_order ?? 9999) || 9999,
+          });
+        });
+
+        (userAchievements || []).forEach((achievement: any) => {
+          if (mergedAchievements.has(achievement.achievement_key)) return;
+          const xpRow = achievement.xp_ledger_id
+            ? xpByLedgerId.get(achievement.xp_ledger_id) as any
+            : xpByAchievementKey.get(achievement.achievement_key) as any;
+          const title = typeof xpRow?.reason === "string"
+            ? xpRow.reason.replace(/^Conquista:\s*/i, "")
+            : achievement.achievement_key;
+          mergedAchievements.set(achievement.achievement_key, {
+            key: achievement.achievement_key,
+            title,
+            description: "Conquista desbloqueada anteriormente.",
+            xpReward: Number(xpRow?.xp_delta ?? 0) || 0,
+            grantedXp: Number(xpRow?.xp_delta ?? 0) || 0,
+            unlocked: true,
+            unlockedAt: achievement.unlocked_at ?? null,
+            sortOrder: 10000,
+          });
+        });
 
         setProfileData(profile);
         setMissions(
@@ -91,6 +181,11 @@ export default function ProfileScreen() {
         );
         setQuizHistory([]);
         setFlashcardHistory(flashcardRows || []);
+        setAchievementRows(
+          [...mergedAchievements.values()].sort((left, right) =>
+            left.sortOrder - right.sortOrder || left.title.localeCompare(right.title)
+          ),
+        );
       }
     } finally {
       setLoading(false);
@@ -99,21 +194,18 @@ export default function ProfileScreen() {
 
   const derivedStats = useMemo(() => {
     const completedMissions = missions.filter((mission) => mission.status === "completed").length;
-    const specializedMissions = missions.filter(
-      (mission) => mission.status === "completed" && mission.mission_type === "specialized",
-    ).length;
     const answeredFlashcards = flashcardHistory.filter((answer) => answer.answer !== null).length;
-    const positiveFlashcards = flashcardHistory.filter((answer) => answer.answer === true).length;
     const correctQuizzes = quizHistory.filter((answer) => answer.correct).length;
 
     return {
-      xp: Math.max(xp, completedMissions * 12 + specializedMissions * 18 + correctQuizzes * 5 + answeredFlashcards),
-      water_l: Math.round((completedMissions * 6 + positiveFlashcards * 1.5 + correctQuizzes * 2) * 10) / 10,
-      co2_kg: Math.round((completedMissions * 0.35 + specializedMissions * 0.8 + correctQuizzes * 0.12) * 10) / 10,
-      waste_g: Math.round(completedMissions * 120 + positiveFlashcards * 25 + correctQuizzes * 35),
+      xp,
+      water_l: impactTotals.water_l,
+      co2_kg: impactTotals.co2_kg,
+      waste_g: impactTotals.waste_g,
+      energy_kwh: impactTotals.energy_kwh,
       vitality: Math.min(100, Math.round(completedMissions * 18 + correctQuizzes * 8 + answeredFlashcards * 2)),
     };
-  }, [flashcardHistory, missions, quizHistory, xp]);
+  }, [flashcardHistory, impactTotals, missions, quizHistory, xp]);
 
   useFocusEffect(
     useCallback(() => {
@@ -214,13 +306,14 @@ export default function ProfileScreen() {
           <Text style={styles.sectionTitle}>Estatísticas de Impacto</Text>
           <View style={styles.statsGrid}>
             <StatCard label="XP" value={String(derivedStats.xp)} />
-            <StatCard label="Água" value={`${derivedStats.water_l || impactTotals.water_l || 0}L`} />
-            <StatCard label="CO2" value={`${derivedStats.co2_kg || impactTotals.co2_kg || 0}kg`} />
-            <StatCard label="Resíduos" value={`${derivedStats.waste_g || impactTotals.waste_g || 0}g`} />
+            <StatCard label="Água" value={`${derivedStats.water_l || 0}L`} />
+            <StatCard label="CO2" value={`${derivedStats.co2_kg || 0}kg`} />
+            <StatCard label="Resíduos" value={`${derivedStats.waste_g || 0}g`} />
+            <StatCard label="Energia" value={`${derivedStats.energy_kwh || 0}kWh`} />
             <StatCard label="Vitalidade" value={`${derivedStats.vitality}/100`} />
           </View>
           <Text style={styles.formulaText}>
-            Fórmula: missões concluídas, quizzes corretos e flashcards respondidos viram impacto estimado.
+            Impacto estimado a partir das missões concluídas registradas no ledger.
           </Text>
         </View>
       )}
@@ -228,21 +321,19 @@ export default function ProfileScreen() {
       {activeTab === "achievements" && (
         <View style={styles.section}>
           <Text style={styles.sectionTitle}>Conquistas</Text>
-          <Achievement
-            title="Primeiras raízes"
-            unlocked={Boolean(profileData?.onboarding_completed)}
-            description="Completou o diagnóstico inicial."
-          />
-          <Achievement
-            title="Discípulo da trilha"
-            unlocked={Boolean(profileData?.daily_flashcards_completed)}
-            description="Completou um lote diário de flashcards."
-          />
-          <Achievement
-            title="Guardião em marcha"
-            unlocked={missions.some((mission) => mission.status === "completed")}
-            description="Concluiu pelo menos uma missão."
-          />
+          {achievementRows.map((achievement) => (
+            <Achievement
+              key={achievement.key}
+              title={achievement.title}
+              unlocked={achievement.unlocked}
+              description={achievement.description}
+              xp={achievement.unlocked ? achievement.grantedXp : achievement.xpReward}
+              unlockedAt={achievement.unlockedAt}
+            />
+          ))}
+          {achievementRows.length === 0 ? (
+            <Text style={styles.emptyText}>As conquistas ainda não foram carregadas.</Text>
+          ) : null}
         </View>
       )}
 
@@ -326,20 +417,6 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Sua Realidade (Socioeconomico)</Text>
-        {profileData?.socioeconomic_context &&
-          Object.entries(profileData.socioeconomic_context).map(
-            ([key, value]) => (
-              <View key={key} style={styles.dataRow}>
-                <Text style={styles.dataLabel}>{key.replace("_", " ")}</Text>
-                <Text style={styles.dataValue}>
-                  {String(value).toUpperCase()}
-                </Text>
-              </View>
-            ),
-          )}
-      </View>
     </ScrollView>
   );
 }
@@ -357,16 +434,26 @@ function Achievement({
   title,
   description,
   unlocked,
+  xp,
+  unlockedAt,
 }: {
   title: string;
   description: string;
   unlocked: boolean;
+  xp: number;
+  unlockedAt: string | null;
 }) {
+  const dateText = unlockedAt
+    ? ` · ${new Date(unlockedAt).toLocaleDateString("pt-BR")}`
+    : "";
+
   return (
     <View style={[styles.achievement, unlocked && styles.achievementUnlocked]}>
       <Text style={styles.achievementTitle}>{title}</Text>
       <Text style={styles.achievementDescription}>{description}</Text>
-      <Text style={styles.achievementStatus}>{unlocked ? "Desbloqueada" : "A caminho"}</Text>
+      <Text style={styles.achievementStatus}>
+        {unlocked ? "Desbloqueada" : "A caminho"} · +{xp} XP{dateText}
+      </Text>
     </View>
   );
 }
@@ -478,14 +565,4 @@ const styles = StyleSheet.create({
   },
   sendButtonDisabled: { backgroundColor: "#A5D6A7" },
   sendText: { color: "#FFF", fontWeight: "bold" },
-  dataRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    marginBottom: 10,
-    borderBottomWidth: 1,
-    borderBottomColor: "#F0F0F0",
-    paddingBottom: 5,
-  },
-  dataLabel: { color: "#999", fontSize: 14, textTransform: "capitalize" },
-  dataValue: { color: "#333", fontWeight: "600", fontSize: 14 },
 });

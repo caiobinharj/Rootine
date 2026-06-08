@@ -172,7 +172,7 @@ export function inferIssueTypeFromText(feedbackText: string): IssueType {
 
   if (/\b(remedio|medicamento|saude|dor|medico|tratamento|banho longo por cuidado)\b/.test(text)) return "health";
   if (/\b(perigoso|risco|inseguro|seguranca|chuva|calor|rua)\b/.test(text)) return "safety";
-  if (/\b(nao tenho acesso|sem acesso|nao controlo|nao tenho controle|nao posso acessar)\b/.test(text)) return "access";
+  if (/\b(nao tenho acesso|sem acesso|nao controlo|nao tenho controle|nao posso acessar|nao sei|sem habilidade|nao tenho habilidade|nao consigo usar|nao tenho carona|sem carona|carona indisponivel|nao tenho carona disponivel)\b/.test(text)) return "access";
   if (/\b(dinheiro|caro|custo|gasto|comprar|sem grana|apertado)\b/.test(text)) return "cost";
   if (/\b(prefiro|gostaria|melhor|nao gosto|não gosto)\b/.test(text)) return "preference";
   if (/\b(tempo|demora|manha|noite|correria|ocupado|rapido|minutos)\b/.test(text)) return "time";
@@ -180,6 +180,20 @@ export function inferIssueTypeFromText(feedbackText: string): IssueType {
   if (/\b(muito facil|facil demais|mais dificil|desafio maior)\b/.test(text)) return "too_easy";
   if (/\b(muito dificil|dificil demais|nao consigo|não consigo|pesado|complicado)\b/.test(text)) return "too_hard";
   return "unclear";
+}
+
+export function inferBlockedActionsFromText(feedbackText: string) {
+  const text = normalizeText(feedbackText);
+  const blocked: string[] = [];
+
+  if (/\b(bike|bicicleta|pedalar|ciclovia|ciclismo)\b/.test(text)) {
+    blocked.push("bike", "bicicleta", "pedalar");
+  }
+  if (/\b(carona|caronas|carpool|compartilhar carona|compartir caronas|sem carona|nao tenho carona)\b/.test(text)) {
+    blocked.push("carona", "caronas", "carpool", "compartilhar_carona", "compartir_caronas");
+  }
+
+  return [...new Set(blocked)];
 }
 
 function defaultAllowedAdjustments(issueType: IssueType) {
@@ -270,7 +284,13 @@ export function normalizeFeedbackClassification(
 ): FeedbackClassificationV1 {
   const rawObject = asObject(raw);
   const inferredIssueType = inferIssueTypeFromText(fallbackText);
-  const issueType = normalizeIssueType(rawObject.issue_type ?? inferredIssueType);
+  let issueType = normalizeIssueType(rawObject.issue_type ?? inferredIssueType);
+  if (
+    ["health", "safety", "access", "cost"].includes(inferredIssueType) &&
+    ["preference", "unclear", "too_hard"].includes(issueType)
+  ) {
+    issueType = inferredIssueType;
+  }
   const strength = normalizeConstraintStrength(rawObject.constraint_strength, issueType);
   const summary = summarizeFeedback(rawObject.raw_text_summary ?? rawObject.summary ?? fallbackText);
   const fact = buildFeedbackFactCandidate({
@@ -304,7 +324,10 @@ export function normalizeFeedbackClassification(
   return {
     issue_type: issueType,
     constraint_strength: strength,
-    blocked_actions: stringArray(rawObject.blocked_actions).map(normalizeToken).slice(0, 8),
+    blocked_actions: [
+      ...stringArray(rawObject.blocked_actions).map(normalizeToken),
+      ...inferBlockedActionsFromText(fallbackText).map(normalizeToken),
+    ].filter((value, index, array) => array.indexOf(value) === index).slice(0, 8),
     allowed_adjustments: stringArray(rawObject.allowed_adjustments).length
       ? stringArray(rawObject.allowed_adjustments).map(normalizeToken).slice(0, 8)
       : defaultAllowedAdjustments(issueType),

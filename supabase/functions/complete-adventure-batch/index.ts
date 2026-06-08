@@ -2,10 +2,12 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import {
   ADVENTURE_ALGORITHM_VERSION,
   ADVENTURE_SCHEMA_VERSION,
-  awardXpWithDailyCap,
-  FLASHCARD_BATCH_SIZE,
   FLASHCARD_COMPLETION_XP,
 } from "../_shared/adventure.ts";
+import {
+  awardXpLedger,
+  unlockEligibleAchievements,
+} from "../_shared/progress.ts";
 import {
   corsHeaders,
   createSupabaseAdmin,
@@ -61,6 +63,8 @@ serve(async (req: Request) => {
     const answeredCount = answeredRows.filter((row: any) => row.answer !== null).length;
     const skippedCount = answeredRows.filter((row: any) => row.answer === null).length;
     const pendingCount = (answers ?? []).filter((row: any) => row.answered_at === null).length;
+    const totalCount = answers?.length ?? 0;
+    const minimumAnsweredForXp = Math.ceil(totalCount * 0.7);
     const completedAt = batch.completed_at ?? new Date().toISOString();
 
     if (batch.active || !batch.completed_at) {
@@ -103,7 +107,8 @@ serve(async (req: Request) => {
           answered_count: answeredCount,
           skipped_count: skippedCount,
           pending_count: pendingCount,
-          total_count: answers?.length ?? 0,
+          total_count: totalCount,
+          min_answered_for_xp: minimumAnsweredForXp,
           expired,
         },
         metadata: {
@@ -118,14 +123,14 @@ serve(async (req: Request) => {
       throw new Error(`Erro ao gravar evento do lote: ${eventError.message}`);
     }
 
-    const xp = await awardXpWithDailyCap(supabaseAdmin, {
+    const xp = await awardXpLedger(supabaseAdmin, {
       userId,
       sourceType: "adventure_batch",
       sourceId: batchId,
       reason: expired
         ? "Lote da Aventura encerrado por tempo"
         : "Lote da Aventura concluído",
-      requestedXp: !expired && answeredCount >= FLASHCARD_BATCH_SIZE
+      requestedXp: !expired && totalCount > 0 && answeredCount >= minimumAnsweredForXp
         ? FLASHCARD_COMPLETION_XP
         : 0,
       idempotencyKey: `adventure_batch:${batchId}`,
@@ -133,9 +138,12 @@ serve(async (req: Request) => {
         answered_count: answeredCount,
         skipped_count: skippedCount,
         pending_count: pendingCount,
+        total_count: totalCount,
+        min_answered_for_xp: minimumAnsweredForXp,
         expired,
       },
     });
+    const achievements = await unlockEligibleAchievements(supabaseAdmin, userId, "complete-adventure-batch");
 
     return jsonResponse({
       success: true,
@@ -143,6 +151,7 @@ serve(async (req: Request) => {
       skipped_count: skippedCount,
       pending_count: pendingCount,
       xp,
+      achievements,
     });
   } catch (error: any) {
     console.error("[ADVENTURE] Erro ao concluir lote:", error.message);

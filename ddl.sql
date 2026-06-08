@@ -684,3 +684,65 @@ CREATE INDEX IF NOT EXISTS user_missions_user_action_fingerprint_created_idx
 CREATE INDEX IF NOT EXISTS mission_generation_logs_user_action_requested_idx
   ON public.mission_generation_logs (user_id, selected_action_fingerprint, requested_at DESC)
   WHERE selected_action_fingerprint IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- PROMPT 9 - XP, impacto, conquistas e Habitat reais.
+-- Execute este bloco incremental no SQL Editor do Supabase antes de redeployar
+-- as Edge Functions que usam rootine_progress_v1.
+-- ---------------------------------------------------------------------------
+ALTER TABLE public.impact_ledger
+  ADD COLUMN IF NOT EXISTS pattern_key text,
+  ADD COLUMN IF NOT EXISTS impact_model_key text NOT NULL DEFAULT 'legacy.default',
+  ADD COLUMN IF NOT EXISTS model_version text NOT NULL DEFAULT 'impact_model_v1';
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impact_ledger_impact_model_key_check'
+      AND conrelid = 'public.impact_ledger'::regclass
+  ) THEN
+    ALTER TABLE public.impact_ledger
+      ADD CONSTRAINT impact_ledger_impact_model_key_check
+      CHECK (btrim(impact_model_key) <> '') NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'impact_ledger_model_version_check'
+      AND conrelid = 'public.impact_ledger'::regclass
+  ) THEN
+    ALTER TABLE public.impact_ledger
+      ADD CONSTRAINT impact_ledger_model_version_check
+      CHECK (btrim(model_version) <> '') NOT VALID;
+  END IF;
+END $$;
+
+CREATE INDEX IF NOT EXISTS impact_ledger_user_model_logged_idx
+  ON public.impact_ledger (user_id, impact_model_key, logged_at DESC);
+
+CREATE INDEX IF NOT EXISTS impact_ledger_user_pattern_logged_idx
+  ON public.impact_ledger (user_id, pattern_key, logged_at DESC)
+  WHERE pattern_key IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- Geração idempotente de missões.
+-- Execute este bloco incremental antes de redeployar generate-missions.
+-- ---------------------------------------------------------------------------
+ALTER TABLE public.user_missions
+  ADD COLUMN IF NOT EXISTS generation_request_id text;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'user_missions_generation_request_id_check'
+      AND conrelid = 'public.user_missions'::regclass
+  ) THEN
+    ALTER TABLE public.user_missions
+      ADD CONSTRAINT user_missions_generation_request_id_check
+      CHECK (generation_request_id IS NULL OR btrim(generation_request_id) <> '') NOT VALID;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_missions_user_generation_request_unique_idx
+  ON public.user_missions (user_id, generation_request_id)
+  WHERE generation_request_id IS NOT NULL;

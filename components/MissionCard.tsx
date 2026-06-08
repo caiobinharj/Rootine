@@ -51,7 +51,7 @@ export default function MissionCard({
             <TouchableOpacity onPress={() => setEditModalVisible(true)} style={styles.editButton}>
               <Text style={styles.editText}>✏️ Editar</Text>
             </TouchableOpacity>
-            <Text style={styles.xpText}>+{xp} XP</Text>
+            <Text style={styles.xpText}>+{xp} XP missão</Text>
           </View>
         </View>
 

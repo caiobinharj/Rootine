@@ -43,7 +43,7 @@ function inferIssueType(feedbackText) {
   const text = normalizeText(feedbackText);
   if (/\b(remedio|medicamento|saude|dor|medico|tratamento)\b/.test(text)) return "health";
   if (/\b(perigoso|risco|inseguro|seguranca|chuva|calor|rua)\b/.test(text)) return "safety";
-  if (/\b(nao tenho acesso|sem acesso|nao controlo|nao tenho controle)\b/.test(text)) return "access";
+  if (/\b(nao tenho acesso|sem acesso|nao controlo|nao tenho controle|nao sei|sem habilidade|nao tenho habilidade|nao consigo usar|nao tenho carona|sem carona|carona indisponivel|nao tenho carona disponivel)\b/.test(text)) return "access";
   if (/\b(dinheiro|caro|custo|gasto|comprar|sem grana|apertado)\b/.test(text)) return "cost";
   if (/\b(prefiro|gostaria|melhor|nao gosto)\b/.test(text)) return "preference";
   if (/\b(tempo|demora|manha|noite|correria|ocupado|rapido|minutos)\b/.test(text)) return "time";
@@ -126,6 +126,8 @@ const fixtures = [
   { name: "ambiguo", text: "Nao da", expectedIssue: "unclear" },
   { name: "seguranca_rua", text: "Nao quero fazer isso na rua porque parece inseguro", expectedIssue: "safety" },
   { name: "preferencia_noite", text: "Prefiro fazer isso a noite", expectedIssue: "preference" },
+  { name: "nao_sei_bike", text: "Gostaria de realizar essa missao, mas nao sei andar de bike", ai: { issue_type: "preference", constraint_strength: "soft" }, expectedIssue: "access" },
+  { name: "nao_tenho_carona", text: "Nao tenho carona disponivel", ai: { issue_type: "preference", constraint_strength: "soft" }, expectedIssue: "access" },
   { name: "ai_issue_portuguese", text: "qualquer", ai: { issue_type: "dinheiro", constraint_strength: "forte" }, expectedIssue: "cost" },
   { name: "ai_accent_fact_type", text: "misturo reciclaveis", ai: { issue_type: "preference", constraint_strength: "soft", new_fact_candidates: [{ fact_key: "feedback.waste.deficit", fact_type: "déficit", category: "waste", confidence: 0.7 }] }, expectedIssue: "preference", expectInvalid: true },
   { name: "ai_invalid_issue", text: "prefiro outra coisa", ai: { issue_type: "jardim", constraint_strength: "soft" }, expectedIssue: "preference" },
@@ -136,7 +138,14 @@ const fixtures = [
 let failures = 0;
 
 for (const fixture of fixtures) {
-  const issueType = normalizeIssueType(fixture.ai?.issue_type, fixture.text);
+  const inferredIssueType = inferIssueType(fixture.text);
+  let issueType = normalizeIssueType(fixture.ai?.issue_type, fixture.text);
+  if (
+    ["health", "safety", "access", "cost"].includes(inferredIssueType) &&
+    ["preference", "unclear", "too_hard"].includes(issueType)
+  ) {
+    issueType = inferredIssueType;
+  }
   const classification = {
     issue_type: issueType,
     constraint_strength: normalizeStrength(fixture.ai?.constraint_strength, issueType),

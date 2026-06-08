@@ -1,3 +1,6 @@
+export { awardXpWithDailyCap } from "./progress.ts";
+export type { XpAwardResult } from "./progress.ts";
+
 export const ADVENTURE_CATEGORIES = [
   "water",
   "energy",
@@ -14,21 +17,11 @@ export const ADVENTURE_ALGORITHM_VERSION = "deterministic_adventure_v1";
 export const FLASHCARD_BATCH_SIZE = 10;
 export const FLASHCARD_RECENT_DAYS = 7;
 export const FLASHCARD_MAX_PER_CATEGORY = 3;
-export const FLASHCARD_ANSWER_XP = 1;
-export const FLASHCARD_COMPLETION_XP = 5;
-export const QUIZ_CORRECT_XP = 5;
-export const QUIZ_REVIEW_XP = 2;
-export const ADVENTURE_DAILY_XP_CAP = 30;
-
-interface SupabaseLike {
-  from: (table: string) => any;
-}
-
-export interface XpAwardResult {
-  xpGranted: number;
-  capped: boolean;
-  alreadyAwarded: boolean;
-}
+export const FLASHCARD_ANSWER_XP = 0;
+export const FLASHCARD_COMPLETION_XP = 4;
+export const QUIZ_CORRECT_XP = 2;
+export const QUIZ_REVIEW_XP = 0;
+export const QUIZ_DAILY_XP_CAP = 8;
 
 export interface FlashcardCatalogRow {
   id: string;
@@ -291,115 +284,4 @@ export function selectDeterministicQuizQuestion(
 
     return hashScore(`${seed}:${left.id}`) - hashScore(`${seed}:${right.id}`);
   })[0] ?? null;
-}
-
-export async function awardXpWithDailyCap(
-  supabaseAdmin: SupabaseLike,
-  input: {
-    userId: string;
-    sourceType: string;
-    sourceId?: string | null;
-    reason: string;
-    requestedXp: number;
-    idempotencyKey: string;
-    metadata?: Record<string, unknown>;
-    dailyCap?: number;
-  },
-): Promise<XpAwardResult> {
-  const requestedXp = Math.max(0, Math.floor(input.requestedXp));
-  if (requestedXp <= 0) {
-    return { xpGranted: 0, capped: false, alreadyAwarded: false };
-  }
-
-  const { data: existing } = await supabaseAdmin
-    .from("xp_ledger")
-    .select("xp_delta")
-    .eq("user_id", input.userId)
-    .eq("idempotency_key", input.idempotencyKey)
-    .maybeSingle();
-
-  if (existing) {
-    return {
-      xpGranted: Number(existing.xp_delta) || 0,
-      capped: false,
-      alreadyAwarded: true,
-    };
-  }
-
-  const dailyCap = input.dailyCap ?? ADVENTURE_DAILY_XP_CAP;
-  const { data: todayRows, error: todayError } = await supabaseAdmin
-    .from("xp_ledger")
-    .select("xp_delta")
-    .eq("user_id", input.userId)
-    .in("source_type", [
-      "adventure_flashcard",
-      "adventure_batch",
-      "adventure_quiz",
-    ])
-    .gte("created_at", startOfUtcDay());
-
-  if (todayError) {
-    throw new Error(`Erro ao consultar XP diário: ${todayError.message}`);
-  }
-
-  const currentDailyXp = (todayRows ?? []).reduce(
-    (sum: number, row: { xp_delta?: unknown }) => sum + Math.max(0, Number(row.xp_delta) || 0),
-    0,
-  );
-  const remaining = Math.max(0, dailyCap - currentDailyXp);
-  const xpGranted = Math.min(requestedXp, remaining);
-
-  if (xpGranted <= 0) {
-    return { xpGranted: 0, capped: true, alreadyAwarded: false };
-  }
-
-  const { error: insertError } = await supabaseAdmin
-    .from("xp_ledger")
-    .insert({
-      user_id: input.userId,
-      source_type: input.sourceType,
-      source_id: input.sourceId ?? null,
-      reason: input.reason,
-      xp_delta: xpGranted,
-      idempotency_key: input.idempotencyKey,
-      metadata: {
-        ...(input.metadata ?? {}),
-        daily_cap: dailyCap,
-        requested_xp: requestedXp,
-        algorithm: ADVENTURE_ALGORITHM_VERSION,
-      },
-    });
-
-  if (insertError) {
-    if (insertError.code === "23505") {
-      return { xpGranted: 0, capped: false, alreadyAwarded: true };
-    }
-    throw new Error(`Erro ao registrar XP: ${insertError.message}`);
-  }
-
-  const { data: profile, error: profileError } = await supabaseAdmin
-    .from("profiles")
-    .select("xp")
-    .eq("id", input.userId)
-    .maybeSingle();
-
-  if (profileError) {
-    throw new Error(`Erro ao buscar XP do perfil: ${profileError.message}`);
-  }
-
-  const nextXp = Math.max(0, Number(profile?.xp) || 0) + xpGranted;
-  const { error: updateError } = await supabaseAdmin
-    .from("profiles")
-    .update({ xp: nextXp })
-    .eq("id", input.userId);
-
-  if (updateError) {
-    throw new Error(`Erro ao atualizar XP do perfil: ${updateError.message}`);
-  }
-
-  return {
-    xpGranted,
-    capped: xpGranted < requestedXp,
-    alreadyAwarded: false,
-  };
 }

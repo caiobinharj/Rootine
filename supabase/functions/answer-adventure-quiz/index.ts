@@ -5,6 +5,7 @@ import {
   awardXpWithDailyCap,
   buildQuizFact,
   QUIZ_CORRECT_XP,
+  QUIZ_DAILY_XP_CAP,
   QUIZ_REVIEW_XP,
 } from "../_shared/adventure.ts";
 import {
@@ -14,6 +15,7 @@ import {
   jsonResponse,
   requireUserIdFromJwt,
 } from "../_shared/supabase-admin.ts";
+import { unlockEligibleAchievements } from "../_shared/progress.ts";
 
 interface AnswerAdventureQuizPayload {
   userId: string;
@@ -153,6 +155,8 @@ serve(async (req: Request) => {
       reason: correct ? "Quiz da Aventura correto" : "Quiz da Aventura revisado",
       requestedXp: correct ? QUIZ_CORRECT_XP : QUIZ_REVIEW_XP,
       idempotencyKey: `adventure_quiz:${answerRow.id}`,
+      dailyCap: QUIZ_DAILY_XP_CAP,
+      dailyCapSourceTypes: ["adventure_quiz"],
       metadata: {
         correct,
         selected_option: selectedOption,
@@ -160,6 +164,7 @@ serve(async (req: Request) => {
         quiz_question_id: quizQuestionId,
       },
     });
+    const achievements = await unlockEligibleAchievements(supabaseAdmin, userId, "answer-adventure-quiz");
 
     return jsonResponse({
       success: true,
@@ -167,6 +172,7 @@ serve(async (req: Request) => {
       explanation: quizQuestion.explanation,
       correct_option: quizQuestion.correct_option,
       xp,
+      achievements,
     });
   } catch (error: any) {
     console.error("[ADVENTURE] Erro ao responder quiz:", error.message);

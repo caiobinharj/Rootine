@@ -2,13 +2,13 @@ import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import {
   ADVENTURE_ALGORITHM_VERSION,
   ADVENTURE_SCHEMA_VERSION,
-  awardXpWithDailyCap,
   FLASHCARD_BATCH_SIZE,
   FLASHCARD_COMPLETION_XP,
   FLASHCARD_RECENT_DAYS,
   isoDaysAgo,
   selectBalancedFlashcards,
 } from "../_shared/adventure.ts";
+import { awardXpLedger, unlockEligibleAchievements } from "../_shared/progress.ts";
 import {
   corsHeaders,
   createSupabaseAdmin,
@@ -27,6 +27,7 @@ async function finalizeStaleCompletedBatch(
   const answeredRows = answers.filter((row) => row.answered_at !== null);
   const answeredCount = answeredRows.filter((row) => row.answer !== null).length;
   const skippedCount = answeredRows.filter((row) => row.answer === null).length;
+  const minimumAnsweredForXp = Math.ceil(answers.length * 0.7);
 
   const { error: batchError } = await supabaseAdmin
     .from("user_daily_flashcards")
@@ -80,6 +81,7 @@ async function finalizeStaleCompletedBatch(
           skipped_count: skippedCount,
           pending_count: 0,
           total_count: answers.length,
+          min_answered_for_xp: minimumAnsweredForXp,
           expired: false,
           repaired_by: "generate-batch",
         },
@@ -97,20 +99,23 @@ async function finalizeStaleCompletedBatch(
     }
   }
 
-  await awardXpWithDailyCap(supabaseAdmin, {
+  await awardXpLedger(supabaseAdmin, {
     userId,
     sourceType: "adventure_batch",
     sourceId: batch.id,
     reason: "Lote da Aventura concluído",
-    requestedXp: answeredCount >= FLASHCARD_BATCH_SIZE ? FLASHCARD_COMPLETION_XP : 0,
+    requestedXp: answers.length > 0 && answeredCount >= minimumAnsweredForXp ? FLASHCARD_COMPLETION_XP : 0,
     idempotencyKey: `adventure_batch:${batch.id}`,
     metadata: {
       answered_count: answeredCount,
       skipped_count: skippedCount,
       pending_count: 0,
+      total_count: answers.length,
+      min_answered_for_xp: minimumAnsweredForXp,
       repaired_by: "generate-batch",
     },
   });
+  await unlockEligibleAchievements(supabaseAdmin, userId, "generate-batch-repair");
 }
 
 serve(async (req: Request) => {

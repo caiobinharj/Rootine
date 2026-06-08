@@ -7,6 +7,7 @@ import {
   jsonResponse,
   requireUserIdFromJwt,
 } from "../_shared/supabase-admin.ts";
+import { unlockEligibleAchievements } from "../_shared/progress.ts";
 import {
   asObject,
   clamp,
@@ -207,6 +208,21 @@ function hasPositiveImpact(impact: Record<string, any>) {
   );
 }
 
+function blockedActionMentioned(text: string, blockedAction: string) {
+  const normalizedText = normalizeText(text);
+  const normalizedAction = normalizeText(blockedAction).replace(/[_.-]+/g, " ");
+  const actionTokens = normalizedAction.split(/\s+/).filter((token) => token.length > 2);
+
+  if (actionTokens.some((token) => ["bike", "bicicleta", "pedalar", "ciclismo"].includes(token))) {
+    return /\b(bike|bicicleta|pedalar|ciclovia|ciclismo)\b/.test(normalizedText);
+  }
+  if (actionTokens.some((token) => ["carona", "caronas", "carpool", "compartilhar", "compartir"].includes(token))) {
+    return /\b(carona|caronas|carpool|compartilhar carona|compartir caronas)\b/.test(normalizedText);
+  }
+
+  return normalizedAction.length >= 4 && normalizedText.includes(normalizedAction);
+}
+
 function factLabel(fact: ProfileFact) {
   const value = asObject(fact.value);
   if (typeof value.label === "string") return value.label;
@@ -273,7 +289,13 @@ function selectPatternForEdit(input: {
   const pool = primary.length ? primary : patterns;
 
   const ranked = pool
-    .filter((pattern) => !blockedActions.has(pattern.action_fingerprint))
+    .filter((pattern) => ![...blockedActions].some((blockedAction) =>
+      pattern.action_fingerprint === blockedAction ||
+      blockedActionMentioned(
+        `${pattern.action_fingerprint} ${pattern.key} ${pattern.fallback_title_pt} ${pattern.fallback_description_pt}`,
+        blockedAction,
+      )
+    ))
     .map((pattern) => {
       let score = 0;
       if (pattern.key === currentPatternKey) score += 10;
@@ -432,6 +454,11 @@ function validateEditedMission(candidate: EditedMissionCandidate, facts: Profile
   if (classification.issue_type === "health" && text.includes("altere o remedio")) {
     errors.push("health_constraint_literalized");
   }
+  for (const blockedAction of classification.blocked_actions) {
+    if (blockedActionMentioned(text, blockedAction)) {
+      errors.push(`blocked_action_literalized:${blockedAction}`);
+    }
+  }
 
   if (classification.issue_type === "unclear") warnings.push("unclear_feedback_conservative_edit");
   return { valid: errors.length === 0, errors: [...new Set(errors)], warnings: [...new Set(warnings)] };
@@ -588,27 +615,52 @@ async function upsertFeedbackFacts(
 ) {
   if (!hasUsefulStructuredFeedback(classification)) return 0;
 
-  const rows = classification.new_fact_candidates.map((fact) => ({
-    user_id: userId,
-    fact_key: fact.fact_key,
-    fact_type: fact.fact_type,
-    category: fact.category,
-    value: {
-      ...fact.value,
-      source: "mission_edit_feedback",
-      classification: {
-        issue_type: classification.issue_type,
-        constraint_strength: classification.constraint_strength,
+  const factKeys = classification.new_fact_candidates.map((fact) => fact.fact_key);
+  const { data: existingFacts, error: existingFactsError } = await supabaseAdmin
+    .from("user_profile_facts")
+    .select("fact_key, source_event_ids, evidence_count, first_seen_at")
+    .eq("user_id", userId)
+    .in("fact_key", factKeys);
+
+  if (existingFactsError) {
+    throw new Error(`Erro ao buscar fatos existentes da edição: ${existingFactsError.message}`);
+  }
+
+  const existingByKey = new Map(
+    ((existingFacts ?? []) as Record<string, unknown>[])
+      .map((fact) => [String(fact.fact_key), fact] as const),
+  );
+
+  const rows = classification.new_fact_candidates.map((fact) => {
+    const existing = existingByKey.get(fact.fact_key) ?? {};
+    const existingEventIds = Array.isArray(existing.source_event_ids)
+      ? existing.source_event_ids.filter((id): id is string => typeof id === "string")
+      : [];
+    const sourceEventIds = [...new Set([...existingEventIds, eventId])].slice(-30);
+
+    return {
+      user_id: userId,
+      fact_key: fact.fact_key,
+      fact_type: fact.fact_type,
+      category: fact.category,
+      value: {
+        ...fact.value,
+        source: "mission_edit_feedback",
+        classification: {
+          issue_type: classification.issue_type,
+          constraint_strength: classification.constraint_strength,
+        },
       },
-    },
-    confidence: fact.confidence,
-    source_event_ids: [eventId],
-    active: true,
-    derived_by: MISSION_EDIT_ALGORITHM_VERSION,
-    evidence_count: 1,
-    last_seen_at: now,
-    updated_at: now,
-  }));
+      confidence: fact.confidence,
+      source_event_ids: sourceEventIds,
+      active: true,
+      derived_by: MISSION_EDIT_ALGORITHM_VERSION,
+      evidence_count: Math.max(numberValue(existing.evidence_count, 0), existingEventIds.length) + 1,
+      first_seen_at: typeof existing.first_seen_at === "string" ? existing.first_seen_at : now,
+      last_seen_at: now,
+      updated_at: now,
+    };
+  });
 
   const { error } = await supabaseAdmin
     .from("user_profile_facts")
@@ -679,6 +731,44 @@ serve(async (req: Request) => {
     if (factsError) throw new Error(`Erro ao buscar fatos: ${factsError.message}`);
     if (patternsError) throw new Error(`Erro ao buscar mission_patterns: ${patternsError.message}`);
 
+    const feedbackText = String(userInput);
+    const feedbackHash = stableHash(`${userId}:${missionId}:${feedbackText}`);
+    const previousFeedbackNotes = asObject(mission.feedback_notes);
+    const previousSnapshot = asObject(mission.generation_snapshot);
+    const previousFeedbackAt = Date.parse(String(
+      previousFeedbackNotes.updated_at ?? previousFeedbackNotes.created_at ?? "",
+    ));
+    const isRecentDuplicateEdit =
+      previousFeedbackNotes.source === "mission_edit" &&
+      previousFeedbackNotes.raw_text_hash === feedbackHash &&
+      previousFeedbackNotes.validation_status === "valid" &&
+      Number.isFinite(previousFeedbackAt) &&
+      Date.now() - previousFeedbackAt < 10 * 60 * 1000;
+
+    if (isRecentDuplicateEdit) {
+      const lastEdit = asObject(previousSnapshot.last_edit);
+      const selected = asObject(lastEdit.selected);
+      const classification = asObject(previousFeedbackNotes.classification);
+
+      console.log("[MISSION_EDIT] Edição duplicada recente ignorada.", {
+        userId,
+        missionId,
+        feedbackHash,
+        issueType: classification.issue_type ?? null,
+      });
+
+      return jsonResponse({
+        success: true,
+        message: "mission_edit_already_applied",
+        mission_id: missionId,
+        issue_type: classification.issue_type ?? null,
+        fallback_reason: previousFeedbackNotes.fallback_reason ?? null,
+        validation_status: previousFeedbackNotes.validation_status ?? null,
+        edited_fields: selected,
+        idempotent: true,
+      });
+    }
+
     const facts = ((rawFacts ?? []) as ProfileFact[]).filter((fact) => fact.active !== false);
     const patterns = ((rawPatterns ?? []) as Record<string, unknown>[])
       .map((pattern) => ({
@@ -693,13 +783,13 @@ serve(async (req: Request) => {
 
     const deterministicClassification = normalizeFeedbackClassification(
       {},
-      String(userInput),
+      feedbackText,
       isCategory(mission.category) ? mission.category : null,
       typeof mission.action_fingerprint === "string" ? mission.action_fingerprint : null,
     );
     const classificationAttempt = await classifyWithAi({
       mission,
-      userInput: String(userInput),
+      userInput: feedbackText,
       deterministicClassification,
       profile,
     });
@@ -750,11 +840,11 @@ serve(async (req: Request) => {
     }
 
     const now = new Date().toISOString();
-    const feedbackHash = stableHash(`${userId}:${missionId}:${String(userInput)}`);
     const editSnapshot = {
       schema_version: MISSION_EDIT_SCHEMA_VERSION,
       algorithm: MISSION_EDIT_ALGORITHM_VERSION,
       edited_at: now,
+      feedback_hash: feedbackHash,
       original: {
         pattern_key: mission.pattern_key ?? null,
         action_fingerprint: mission.action_fingerprint ?? null,
@@ -790,7 +880,6 @@ serve(async (req: Request) => {
         warnings: validation.warnings,
       },
     };
-    const previousSnapshot = asObject(mission.generation_snapshot);
     const generationSnapshot = {
       ...previousSnapshot,
       last_edit: editSnapshot,
@@ -800,7 +889,7 @@ serve(async (req: Request) => {
       source: "mission_edit",
       raw_text_summary: classification.raw_text_summary,
       raw_text_hash: feedbackHash,
-      raw_text_length: String(userInput).length,
+      raw_text_length: feedbackText.length,
       classification,
       created_at: now,
       updated_at: now,
@@ -858,7 +947,7 @@ serve(async (req: Request) => {
         payload: {
           mission_id: missionId,
           feedback_hash: feedbackHash,
-          feedback_length: String(userInput).length,
+          feedback_length: feedbackText.length,
           feedback_summary: classification.raw_text_summary,
           classification,
           creates_structured_fact: hasUsefulStructuredFeedback(classification),
@@ -883,6 +972,7 @@ serve(async (req: Request) => {
     if (eventError) throw new Error(`Erro ao registrar evento de feedback: ${eventError.message}`);
 
     const factsWritten = await upsertFeedbackFacts(supabaseAdmin, userId, classification, eventId, now);
+    const achievements = await unlockEligibleAchievements(supabaseAdmin, userId, "edit-mission");
 
     await logAgentInteraction(supabaseAdmin, {
       userId,
@@ -890,7 +980,7 @@ serve(async (req: Request) => {
       eventType: "EDIT_MISSION",
       inputSummary: {
         missionId,
-        feedbackLength: String(userInput).length,
+        feedbackLength: feedbackText.length,
         issueType: classification.issue_type,
       },
       output: {
@@ -899,6 +989,7 @@ serve(async (req: Request) => {
         action_fingerprint: finalCandidate.action_fingerprint,
         issue_type: classification.issue_type,
         facts_written: factsWritten,
+        achievements_unlocked: achievements.unlocked.length,
         ai_used: classificationAttempt.usedAi || composed.usedAi,
         fallback_reason: fallbackReason ?? classificationAttempt.fallbackReason ?? null,
       },
@@ -915,6 +1006,7 @@ serve(async (req: Request) => {
       fallbackReason: fallbackReason ?? classificationAttempt.fallbackReason ?? null,
       validationStatus: "valid",
       factsWritten,
+      achievementsUnlocked: achievements.unlocked.length,
       elapsedMs: Date.now() - new Date(startedAt).getTime(),
     });
 
@@ -927,6 +1019,7 @@ serve(async (req: Request) => {
       ai_used: classificationAttempt.usedAi || composed.usedAi,
       fallback_reason: fallbackReason ?? classificationAttempt.fallbackReason ?? null,
       facts_written: factsWritten,
+      achievements,
     });
   } catch (error: any) {
     console.error("[MISSION_EDIT] Erro crítico:", error.message);

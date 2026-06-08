@@ -19,6 +19,7 @@ import {
   jsonResponse,
   requireUserIdFromJwt,
 } from "../_shared/supabase-admin.ts";
+import { unlockEligibleAchievements } from "../_shared/progress.ts";
 
 interface CompleteOnboardingPayload {
   userId: string;
@@ -94,7 +95,7 @@ serve(async (req: Request) => {
         .insert({
           id: userId,
           name: getProfileName(user),
-          xp: 1,
+          xp: 0,
           onboarding_completed: false,
         });
 
@@ -222,11 +223,14 @@ serve(async (req: Request) => {
       algorithm: ONBOARDING_ALGORITHM_VERSION,
     });
 
+    const achievements = await unlockEligibleAchievements(supabaseAdmin, userId, "complete-onboarding");
+
     return jsonResponse({
       success: true,
       event_count: answerEvents.length + 1,
       fact_count: factRows.length,
       onboarding_completed: true,
+      achievements,
     });
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);

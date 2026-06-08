@@ -593,7 +593,7 @@ prepared AS (
     pattern_key AS action_fingerprint,
     recurrence_allowed,
     fallback_title_pt,
-    'Hoje, ' || action_pt || '. Faça em um momento seguro da rotina e registre mentalmente o que funcionou.' AS fallback_description_pt,
+    'Hoje, ' || action_pt || '.' AS fallback_description_pt,
     CASE category
       WHEN 'water' THEN 'Reduz desperdício de água com uma ação observável e ajustável ao controle real do usuário.'
       WHEN 'energy' THEN 'Economiza energia sem exigir compra e respeita segurança elétrica e conforto básico.'
@@ -1026,5 +1026,247 @@ WHERE generation_log.selected_pattern_key = pattern.key
 
 ALTER TABLE public.mission_patterns VALIDATE CONSTRAINT mission_patterns_action_fingerprint_check;
 ALTER TABLE public.user_missions VALIDATE CONSTRAINT user_missions_action_fingerprint_check;
+
+COMMIT;
+
+-- ============================================================================
+-- PROMPT 9 - XP, impacto, conquistas e Habitat reais.
+-- Execute depois do bloco incremental correspondente em ddl.sql.
+-- ============================================================================
+BEGIN;
+
+UPDATE public.impact_ledger AS impact
+SET
+  pattern_key = COALESCE(impact.pattern_key, mission.pattern_key),
+  impact_model_key = COALESCE(pattern.impact_model_key, impact.impact_model_key, 'legacy.default'),
+  model_version = COALESCE(NULLIF(impact.model_version, ''), 'impact_model_v1'),
+  metadata = COALESCE(impact.metadata, '{}'::jsonb) ||
+    jsonb_build_object(
+      'prompt9_backfilled', true,
+      'schema_version', 1,
+      'algorithm', 'rootine_progress_v1'
+    )
+FROM public.user_missions AS mission
+LEFT JOIN public.mission_patterns AS pattern
+  ON pattern.key = mission.pattern_key
+WHERE impact.mission_id = mission.id;
+
+UPDATE public.impact_ledger
+SET
+  impact_model_key = COALESCE(NULLIF(impact_model_key, ''), 'legacy.default'),
+  model_version = COALESCE(NULLIF(model_version, ''), 'impact_model_v1')
+WHERE impact_model_key IS NULL
+   OR btrim(impact_model_key) = ''
+   OR model_version IS NULL
+   OR btrim(model_version) = '';
+
+ALTER TABLE public.impact_ledger VALIDATE CONSTRAINT impact_ledger_impact_model_key_check;
+ALTER TABLE public.impact_ledger VALIDATE CONSTRAINT impact_ledger_model_version_check;
+
+INSERT INTO public.achievement_definitions
+  (key, title, description, xp_reward, category, criteria, sort_order, active)
+VALUES
+  (
+    'first_mission_completed',
+    'Primeira missão viva',
+    'Concluiu a primeira missão da Trilha.',
+    20,
+    'consumption',
+    '{"metric":"completed_missions","min":1}'::jsonb,
+    30,
+    true
+  ),
+  (
+    'five_missions_completed',
+    'Ritmo de cuidado',
+    'Concluiu cinco missões da Trilha.',
+    35,
+    'consumption',
+    '{"metric":"completed_missions","min":5}'::jsonb,
+    35,
+    true
+  ),
+  (
+    'twenty_missions_completed',
+    'Guardião constante',
+    'Concluiu vinte missões da Trilha.',
+    80,
+    'consumption',
+    '{"metric":"completed_missions","min":20}'::jsonb,
+    45,
+    true
+  ),
+  (
+    'first_adventure_batch',
+    'Semente de aventura',
+    'Concluiu o primeiro lote da Aventura com respostas suficientes.',
+    15,
+    'consumption',
+    '{"metric":"adventure_batches","min":1}'::jsonb,
+    20,
+    true
+  ),
+  (
+    'seven_active_days',
+    'Sete amanheceres',
+    'Interagiu com o Rootine em sete dias diferentes.',
+    40,
+    'consumption',
+    '{"metric":"active_days","min":7}'::jsonb,
+    55,
+    true
+  ),
+  (
+    'four_categories_touched',
+    'Mapa do território',
+    'Trabalhou quatro categorias sustentáveis diferentes.',
+    35,
+    'consumption',
+    '{"metric":"categories_touched","min":4}'::jsonb,
+    65,
+    true
+  ),
+  (
+    'first_mission_edit',
+    'Missão sob medida',
+    'Adaptou uma missão com feedback útil.',
+    20,
+    'consumption',
+    '{"metric":"mission_edits","min":1}'::jsonb,
+    75,
+    true
+  ),
+  (
+    'mission_difficulty_3',
+    'Passo firme',
+    'Concluiu uma missão de dificuldade 3 ou maior.',
+    25,
+    'consumption',
+    '{"metric":"mission_difficulty","min":3}'::jsonb,
+    85,
+    true
+  ),
+  (
+    'mission_difficulty_4',
+    'Copa resiliente',
+    'Concluiu uma missão de dificuldade 4 ou maior.',
+    45,
+    'consumption',
+    '{"metric":"mission_difficulty","min":4}'::jsonb,
+    95,
+    true
+  ),
+  (
+    'impact_water',
+    'Cuidado com a água',
+    'Registrou impacto estimado positivo em água.',
+    25,
+    'water',
+    '{"metric":"impact.water_l","min":0.01}'::jsonb,
+    105,
+    true
+  ),
+  (
+    'impact_waste',
+    'Menos resíduos',
+    'Registrou impacto estimado positivo em resíduos.',
+    25,
+    'waste',
+    '{"metric":"impact.waste_g","min":0.01}'::jsonb,
+    115,
+    true
+  ),
+  (
+    'impact_co2_energy',
+    'Ar mais leve',
+    'Registrou impacto estimado positivo em CO2 ou energia.',
+    25,
+    'energy',
+    '{"metric":"impact.co2_or_energy","min":0.01}'::jsonb,
+    125,
+    true
+  )
+ON CONFLICT (key) DO UPDATE SET
+  title = EXCLUDED.title,
+  description = EXCLUDED.description,
+  xp_reward = EXCLUDED.xp_reward,
+  category = EXCLUDED.category,
+  criteria = EXCLUDED.criteria,
+  sort_order = EXCLUDED.sort_order,
+  active = true,
+  updated_at = now();
+
+WITH ledger AS (
+  SELECT user_id, COALESCE(SUM(GREATEST(xp_delta, 0)), 0)::int AS total_xp
+  FROM public.xp_ledger
+  GROUP BY user_id
+)
+UPDATE public.profiles AS profile
+SET xp = COALESCE(ledger.total_xp, 0)
+FROM public.profiles AS all_profiles
+LEFT JOIN ledger ON ledger.user_id = all_profiles.id
+WHERE profile.id = all_profiles.id;
+
+-- Evita bônus duplicado com a conquista obrigatória impact_water do Prompt 9.
+UPDATE public.achievement_definitions
+SET active = false,
+    updated_at = now()
+WHERE key = 'water_saver_seed';
+
+-- Remove rodapé genérico dos patterns para a IA/fallback trabalharem com ações concretas.
+UPDATE public.mission_patterns
+SET fallback_description_pt = btrim(regexp_replace(
+      fallback_description_pt,
+      '\s*Faça em um momento seguro da rotina e registre mentalmente o que funcionou\.?',
+      '',
+      'gi'
+    )),
+    updated_at = now()
+WHERE fallback_description_pt ILIKE '%registre mentalmente o que funcionou%';
+
+-- Limpa missões ativas já criadas com o rodapé antigo.
+UPDATE public.user_missions
+SET description = btrim(regexp_replace(
+      regexp_replace(
+        regexp_replace(
+          description,
+          '\s*Faça em um momento seguro da rotina e registre mentalmente o que funcionou\.?',
+          '',
+          'gi'
+        ),
+        '\s*Reserve em (poucos minutos|cerca de [0-9]+ minutos|até [0-9]+ minutos, sem pressa|ao longo de até [0-9]+ minutos) e não compre nada para concluir\.?',
+        '',
+        'gi'
+      ),
+      '\s*Distribua ou repita a ação ao longo de até 7 dias, acompanhando o que funcionou\.?',
+      '',
+      'gi'
+    ))
+WHERE status = 'active'
+  AND (
+    description ILIKE '%registre mentalmente o que funcionou%'
+    OR description ILIKE '%não compre nada para concluir%'
+    OR description ILIKE '%Distribua ou repita a ação%'
+  );
+
+-- Idempotência para geração: retries da mesma tentativa lógica não criam missões duplicadas.
+ALTER TABLE public.user_missions
+  ADD COLUMN IF NOT EXISTS generation_request_id text;
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'user_missions_generation_request_id_check'
+      AND conrelid = 'public.user_missions'::regclass
+  ) THEN
+    ALTER TABLE public.user_missions
+      ADD CONSTRAINT user_missions_generation_request_id_check
+      CHECK (generation_request_id IS NULL OR btrim(generation_request_id) <> '') NOT VALID;
+  END IF;
+END $$;
+
+CREATE UNIQUE INDEX IF NOT EXISTS user_missions_user_generation_request_unique_idx
+  ON public.user_missions (user_id, generation_request_id)
+  WHERE generation_request_id IS NOT NULL;
 
 COMMIT;

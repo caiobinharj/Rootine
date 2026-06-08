@@ -2,7 +2,7 @@ import { useFocusEffect } from "expo-router";
 import MissionCard from "@/components/MissionCard";
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
-import React, { useCallback, useEffect } from "react";
+import React, { useCallback } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -53,7 +53,7 @@ export default function MissionsScreen() {
             category={item.ai_justification?.category || "general"}
             justification={item.ai_justification?.reason || ""}
             expiresAt={item.expires_at}
-            xp={10} // XP base para missões dinâmicas
+            xp={item.xp_reward ?? (item.mission_type === "specialized" ? 25 : 10)}
           />
         )}
         ListEmptyComponent={
