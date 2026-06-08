@@ -83,10 +83,12 @@ export function parseJsonObject<T extends Record<string, unknown>>(
       : trimmed;
 
     const parsed = JSON.parse(json);
-    return parsed && typeof parsed === "object" ? parsed : fallback;
+    return parsed && typeof parsed === "object"
+      ? parsed
+      : { ...fallback, _fallback_reason: "invalid_agent_payload" } as T;
   } catch (error) {
     console.error("[AGENTS] JSON parse failed:", error);
-    return fallback;
+    return { ...fallback, _fallback_reason: "invalid_json" } as T;
   }
 }
 
@@ -110,17 +112,21 @@ function buildFallbackResult<T extends Record<string, unknown>>(
     } as T;
   }
 
-  if (message.includes("OPENAI_API_KEY") || message.includes("OPEN_AI_KEY")) {
+  if (
+    message.includes("OPENAI_API_KEY") ||
+    message.includes("OPEN_AI_KEY") ||
+    message.includes("GROQ_API_KEY")
+  ) {
     return {
       ...fallback,
       answer:
-        "A chave da OpenAI não está configurada nas Edge Functions. Rode `npx supabase secrets set OPEN_AI_KEY=sua_chave`.",
-      _fallback_reason: "missing_openai_key",
+        "A chave de IA não está configurada nas Edge Functions. Configure `GROQ_API_KEY` ou `OPEN_AI_KEY` nos secrets do Supabase.",
+      _fallback_reason: "missing_agent_key",
     } as T;
   }
 
   console.warn(`[AGENTS] ${role} failed; using fallback output:`, error);
-  return fallback as T;
+  return { ...fallback, _fallback_reason: "agent_error" } as T;
 }
 
 export async function runJsonAgent<T extends Record<string, unknown>>({
@@ -138,8 +144,8 @@ ${JSON.stringify(context, null, 2)}
 Return STRICTLY valid JSON. Do not wrap it in markdown.`);
 
     const parsed = parseJsonObject<T>(raw, fallback as T);
-    if (parsed === fallback) {
-      console.warn(`[AGENTS] ${role} returned unparsable JSON; using fallback output`);
+    if (parsed?._fallback_reason) {
+      console.warn(`[AGENTS] ${role} returned fallback output:`, parsed._fallback_reason);
     }
     return parsed;
   } catch (error) {
@@ -151,6 +157,12 @@ async function runAgentText(role: AgentRole, input: string): Promise<string> {
   const openAiKey = Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY");
   const groqKey = Deno.env.get("GROQ_API_KEY");
   let lastError: unknown = null;
+
+  console.log("[AGENTS] Provider configuration:", {
+    role,
+    openaiConfigured: Boolean(openAiKey),
+    groqConfigured: Boolean(groqKey),
+  });
 
   if (openAiKey) {
     try {
@@ -205,6 +217,7 @@ async function runAgentHttp(
   input: string,
   apiKey: string,
   provider: "openai" | "groq",
+  useJsonMode = true,
 ) {
   const config = AGENTS[role];
   const model = provider === "groq"
@@ -214,24 +227,40 @@ async function runAgentHttp(
     ? "https://api.groq.com/openai/v1/chat/completions"
     : "https://api.openai.com/v1/chat/completions";
 
+  const requestBody: Record<string, unknown> = {
+    model,
+    messages: [
+      { role: "system", content: config.instructions },
+      { role: "user", content: input },
+    ],
+  };
+
+  if (useJsonMode) {
+    requestBody.response_format = { type: "json_object" };
+  }
+
   const response = await fetch(url, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${apiKey}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify({
-      model,
-      messages: [
-        { role: "system", content: config.instructions },
-        { role: "user", content: input },
-      ],
-      response_format: { type: "json_object" },
-    }),
+    body: JSON.stringify(requestBody),
   });
 
   if (!response.ok) {
     const errorText = await response.text();
+    const lowerError = errorText.toLowerCase();
+    if (
+      provider === "groq" &&
+      useJsonMode &&
+      response.status === 400 &&
+      (lowerError.includes("response_format") || lowerError.includes("json_object"))
+    ) {
+      console.warn("[AGENTS] Groq JSON mode unsupported, retrying without response_format.");
+      return runAgentHttp(role, input, apiKey, provider, false);
+    }
+
     throw new Error(`Erro ${provider}: ${response.status} - ${errorText}`);
   }
 

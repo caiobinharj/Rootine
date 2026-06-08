@@ -2,6 +2,56 @@ import { BATCH_DURATION_HOURS } from "@/constants/flashcards";
 import { supabase } from "@/lib/supabase";
 import { create } from "zustand";
 
+const ANSWER_RETRY_DELAYS_MS = [250, 700];
+
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function isRetryableNetworkError(error: unknown) {
+  const message = String((error as any)?.message ?? error ?? "").toLowerCase();
+  const name = String((error as any)?.name ?? "").toLowerCase();
+
+  return (
+    name.includes("fetch") ||
+    message.includes("failed to fetch") ||
+    message.includes("failed to send") ||
+    message.includes("network") ||
+    message.includes("err_network_changed")
+  );
+}
+
+async function invokeAnswerCardWithRetry(
+  userId: string,
+  answerId: string,
+  answer: boolean | null,
+) {
+  let lastResult: Awaited<ReturnType<typeof supabase.functions.invoke>> | null = null;
+
+  for (let attempt = 0; attempt <= ANSWER_RETRY_DELAYS_MS.length; attempt += 1) {
+    const result = await supabase.functions.invoke("answer-adventure-card", {
+      body: {
+        userId,
+        answerId,
+        answer,
+      },
+    });
+
+    lastResult = result;
+
+    if (!result.error || !isRetryableNetworkError(result.error)) {
+      return result;
+    }
+
+    const delay = ANSWER_RETRY_DELAYS_MS[attempt];
+    if (delay) await sleep(delay);
+  }
+
+  return lastResult ?? { data: null, error: new Error("Falha ao responder carta.") };
+}
+
 // Tipagens baseadas no schema do Supabase
 interface DailyBatch {
   id: string;
@@ -16,7 +66,24 @@ interface FlashcardAnswer {
   answerId: string;
   flashcardId: string;
   question: string;
+  category: string | null;
+  signalType: string | null;
+  difficulty: number | null;
   answer: boolean | null;
+  answeredAt: string | null;
+}
+
+interface BatchFlashcardPayload {
+  id: string;
+  flashcard_id: string;
+  answer: boolean | null;
+  answered_at?: string | null;
+  flashcards?: {
+    question?: string | null;
+    category?: string | null;
+    signal_type?: string | null;
+    difficulty?: number | null;
+  } | null;
 }
 
 interface FlashcardState {
@@ -28,7 +95,7 @@ interface FlashcardState {
 
   // Ações
   fetchActiveBatch: (userId: string) => Promise<void>;
-  answerFlashcard: (answerId: string, answer: boolean | null) => Promise<void>;
+  answerFlashcard: (userId: string, answerId: string, answer: boolean | null) => Promise<boolean>;
   checkBatchExpiry: (batch: DailyBatch) => Promise<boolean>;
   completeBatch: (userId: string, batchId: string) => Promise<void>;
   requestNewBatch: (userId: string) => Promise<void>;
@@ -74,7 +141,7 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
       // 3. Busca as respostas do batch
       const { data: answers, error: ansErr } = await supabase
         .from("user_flashcards_answers")
-        .select("id, flashcard_id, answer")
+        .select("id, flashcard_id, answer, answered_at")
         .eq("daily_batch", batch.id);
 
       if (ansErr) {
@@ -85,16 +152,24 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
 
       // 4. Busca as perguntas dos flashcards em separado (evita join com RLS)
       const flashcardIds = (answers || []).map((a: any) => a.flashcard_id);
-      let questionsMap: Record<string, string> = {};
+      let questionsMap: Record<
+        string,
+        {
+          question?: string;
+          category?: string | null;
+          signal_type?: string | null;
+          difficulty?: number | null;
+        }
+      > = {};
 
       if (flashcardIds.length > 0) {
         const { data: flashcards } = await supabase
           .from("flashcards")
-          .select("id, question")
+          .select("id, question, category, signal_type, difficulty")
           .in("id", flashcardIds);
 
         questionsMap = Object.fromEntries(
-          (flashcards || []).map((f: any) => [f.id, f.question]),
+          (flashcards || []).map((f: any) => [f.id, f]),
         );
       }
 
@@ -102,12 +177,16 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
       const allCards: FlashcardAnswer[] = (answers || []).map((a: any) => ({
         answerId: a.id,
         flashcardId: a.flashcard_id,
-        question: questionsMap[a.flashcard_id] || "Pergunta não encontrada",
+        question: questionsMap[a.flashcard_id]?.question || "Pergunta não encontrada",
+        category: questionsMap[a.flashcard_id]?.category ?? null,
+        signalType: questionsMap[a.flashcard_id]?.signal_type ?? null,
+        difficulty: questionsMap[a.flashcard_id]?.difficulty ?? null,
         answer: a.answer,
+        answeredAt: a.answered_at ?? null,
       }));
 
-      const pending = allCards.filter((c) => c.answer === null);
-      const answered = allCards.filter((c) => c.answer !== null).length;
+      const pending = allCards.filter((c) => c.answeredAt === null);
+      const answered = allCards.filter((c) => c.answeredAt !== null).length;
 
       set({
         currentBatch: batch,
@@ -121,13 +200,10 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
     }
   },
 
-  answerFlashcard: async (answerId: string, answer: boolean | null) => {
-    const { error } = await supabase
-      .from("user_flashcards_answers")
-      .update({ answer })
-      .eq("id", answerId);
+  answerFlashcard: async (userId: string, answerId: string, answer: boolean | null) => {
+    const { data, error } = await invokeAnswerCardWithRetry(userId, answerId, answer);
 
-    if (!error) {
+    if (!error && !data?.error) {
       // Remove da lista de pendentes localmente para resposta instantânea
       set((state) => ({
         pendingFlashcards: state.pendingFlashcards.filter(
@@ -135,8 +211,10 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
         ),
         answeredCount: state.answeredCount + 1,
       }));
+      return true;
     } else {
-      console.error("Erro ao responder flashcard:", error);
+      console.error("Erro ao responder carta da Aventura:", error ?? data?.error);
+      return false;
     }
   },
 
@@ -146,31 +224,25 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
     const now = Date.now();
 
     if (now >= expiresAt) {
-      // Batch expirou: fechar e contar respostas
-      const { data: answers } = await supabase
-        .from("user_flashcards_answers")
-        .select("id, answer")
-        .eq("daily_batch", batch.id);
+      const { data, error } = await supabase.functions.invoke("complete-adventure-batch", {
+        body: {
+          userId: batch.user_id,
+          batchId: batch.id,
+          expired: true,
+        },
+      });
 
-      const answeredCount = (answers || []).filter(
-        (a: any) => a.answer !== null,
-      ).length;
-
-      await supabase
-        .from("user_daily_flashcards")
-        .update({
-          active: false,
-          completed_at: new Date().toISOString(),
-          amount: answeredCount,
-        })
-        .eq("id", batch.id);
-
-      // Dispara sync-user-brain mesmo com lote parcial — não-bloqueante
-      supabase.functions
-        .invoke("sync-user-brain", {
-          body: { userId: batch.user_id, event_type: "BATCH_COMPLETED", batchId: batch.id },
-        })
-        .catch((err) => console.error("[FLASHCARD] Brain sync (timeout) error:", err));
+      if (!error && !data?.error) {
+        supabase.functions
+          .invoke("sync-user-brain", {
+            body: {
+              userId: batch.user_id,
+              event_type: "BATCH_COMPLETED",
+              batchId: batch.id,
+            },
+          })
+          .catch((err) => console.error("[BRAIN] Sync lote expirado error:", err));
+      }
 
       set({
         currentBatch: null,
@@ -190,28 +262,31 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
   completeBatch: async (userId: string, batchId: string) => {
     try {
       // 1. Marca o batch como concluído
-      await supabase
-        .from("user_daily_flashcards")
-        .update({ active: false, completed_at: new Date().toISOString() })
-        .eq("id", batchId);
+      const { data, error } = await supabase.functions.invoke(
+        "complete-adventure-batch",
+        {
+          body: { userId, batchId },
+        },
+      );
 
-      // 2. Seta daily_flashcards_completed = true no perfil
-      await supabase
-        .from("profiles")
-        .update({ daily_flashcards_completed: true })
-        .eq("id", userId);
+      if (error || data?.error) {
+        throw error ?? new Error(String(data?.error));
+      }
 
-      // 3. Dispara sync-user-brain (BATCH_COMPLETED) — não-bloqueante
       supabase.functions
         .invoke("sync-user-brain", {
-          body: { userId, event_type: "BATCH_COMPLETED", batchId },
+          body: {
+            userId,
+            event_type: "BATCH_COMPLETED",
+            batchId,
+          },
         })
-        .then(() => console.log("[FLASHCARD] Brain sync disparado (BATCH_COMPLETED)"))
-        .catch((err) => console.error("[FLASHCARD] Brain sync error:", err));
+        .catch((err) => console.error("[BRAIN] Sync lote concluído error:", err));
 
       set({ currentBatch: null, pendingFlashcards: [], answeredCount: 0 });
     } catch (err) {
       console.error("Erro ao completar batch:", err);
+      throw err;
     }
   },
 
@@ -232,10 +307,36 @@ export const useFlashcardStore = create<FlashcardState>((set, get) => ({
 
       if (error) throw error;
 
-      console.log("[FLASHCARD] Novo batch gerado:", data);
+      console.log("[ADVENTURE] Novo batch gerado:", {
+        success: data?.success,
+        reused: data?.reused,
+        amount: data?.flashcards?.length,
+      });
 
-      // Recarrega o batch ativo para popular o estado
-      await get().fetchActiveBatch(userId);
+      if (data?.batch && Array.isArray(data?.flashcards)) {
+        const allCards: FlashcardAnswer[] = data.flashcards.map(
+          (card: BatchFlashcardPayload) => ({
+            answerId: card.id,
+            flashcardId: card.flashcard_id,
+            question: card.flashcards?.question || "Pergunta não encontrada",
+            category: card.flashcards?.category ?? null,
+            signalType: card.flashcards?.signal_type ?? null,
+            difficulty: card.flashcards?.difficulty ?? null,
+            answer: card.answer,
+            answeredAt: card.answered_at ?? null,
+          }),
+        );
+        const pending = allCards.filter((card) => card.answeredAt === null);
+
+        set({
+          currentBatch: data.batch,
+          pendingFlashcards: pending,
+          answeredCount: allCards.length - pending.length,
+        });
+      } else {
+        // Recarrega o batch ativo quando a função não devolve o payload completo.
+        await get().fetchActiveBatch(userId);
+      }
     } catch (err) {
       console.error("Erro ao solicitar novo batch:", err);
     } finally {

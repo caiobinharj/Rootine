@@ -1,6 +1,17 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { allowedCategories, logAgentInteraction, runJsonAgent } from "../_shared/agents.ts";
-import { corsHeaders, createSupabaseAdmin, jsonResponse } from "../_shared/supabase-admin.ts";
+import {
+  ADVENTURE_ALGORITHM_VERSION,
+  ADVENTURE_SCHEMA_VERSION,
+  isoDaysAgo,
+  selectDeterministicQuizQuestion,
+} from "../_shared/adventure.ts";
+import {
+  corsHeaders,
+  createSupabaseAdmin,
+  getErrorStatus,
+  jsonResponse,
+  requireUserIdFromJwt,
+} from "../_shared/supabase-admin.ts";
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -11,114 +22,101 @@ serve(async (req: Request) => {
     const { userId } = await req.json();
     if (!userId) throw new Error("O parâmetro 'userId' é obrigatório.");
 
+    await requireUserIdFromJwt(req, userId);
+
     const supabaseAdmin = createSupabaseAdmin();
+    console.log("[ADVENTURE] Selecionando quiz determinístico.", { userId });
 
-    const [{ data: profile }, { data: recentAnswers }, { data: recentQuizzes }] = await Promise.all([
-      supabaseAdmin
-        .from("profiles")
-        .select("xp, socioeconomic_context, learned_preferences, affinities")
-        .eq("id", userId)
-        .single(),
-      supabaseAdmin
-        .from("user_flashcards_answers")
-        .select("answer, flashcards(question)")
-        .eq("user_id", userId)
-        .order("id", { ascending: false })
-        .limit(10),
-      supabaseAdmin
-        .from("quizzes")
-        .select("question, category, created_at")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false })
-        .limit(5),
-    ]);
+    const [{ data: profile }, { data: questions, error: questionsError }, { data: recentAnswers }] =
+      await Promise.all([
+        supabaseAdmin
+          .from("profiles")
+          .select("xp, affinities")
+          .eq("id", userId)
+          .maybeSingle(),
+        supabaseAdmin
+          .from("quiz_questions")
+          .select("id, category, question, options, correct_option, explanation, difficulty, signal_key, metadata")
+          .eq("active", true),
+        supabaseAdmin
+          .from("user_quiz_answers")
+          .select("quiz_question_id")
+          .eq("user_id", userId)
+          .not("quiz_question_id", "is", null)
+          .gte("answered_at", isoDaysAgo(7)),
+      ]);
 
-    const aiResult = await runJsonAgent({
-      role: "guardian",
-      task: `Generate one educational quiz for Rootine's Trilha.
-Rules:
-- Do not create flashcards.
-- Use the user's context and recent learning gaps.
-- The question, options and explanation must be in Brazilian Portuguese.
-- There must be exactly four options, each with id A, B, C, D.
-- correct_option must be one of A, B, C, D.
-- category must be one of ${allowedCategories.join(", ")}.
-Expected JSON:
-{
-  "question": "string",
-  "options": [
-    { "id": "A", "text": "string" },
-    { "id": "B", "text": "string" },
-    { "id": "C", "text": "string" },
-    { "id": "D", "text": "string" }
-  ],
-  "correct_option": "A",
-  "explanation": "string",
-  "category": "water"
-}`,
-      context: { profile, recent_flashcards: recentAnswers || [], recent_quizzes: recentQuizzes || [] },
-      fallback: {
-        question: "Qual atitude costuma reduzir desperdício no dia a dia sem exigir compra nova?",
-        options: [
-          { id: "A", text: "Planejar o uso do que já existe antes de comprar mais" },
-          { id: "B", text: "Trocar todos os objetos por versões novas" },
-          { id: "C", text: "Ignorar pequenos hábitos domésticos" },
-          { id: "D", text: "Separar apenas resíduos grandes" },
-        ],
-        correct_option: "A",
-        explanation: "Planejar antes de comprar reduz consumo impulsivo e desperdício sem custo adicional.",
-        category: "consumption",
-      },
-    }) as any;
+    if (questionsError) {
+      throw new Error(`Erro ao buscar quiz_questions: ${questionsError.message}`);
+    }
 
-    const options = Array.isArray(aiResult.options) ? aiResult.options.slice(0, 4) : [];
-    const correctOption = ["A", "B", "C", "D"].includes(aiResult.correct_option)
-      ? aiResult.correct_option
-      : "A";
-    const category = allowedCategories.includes(aiResult.category)
-      ? aiResult.category
-      : "consumption";
+    if (!questions?.length) {
+      throw new Error("Nenhuma quiz_question ativa disponível.");
+    }
+
+    const recentQuestionIds = new Set(
+      (recentAnswers ?? [])
+        .map((answer: any) => answer.quiz_question_id)
+        .filter((id: unknown): id is string => typeof id === "string"),
+    );
+
+    const selected = selectDeterministicQuizQuestion(
+      questions as any,
+      recentQuestionIds,
+      profile?.affinities ?? {},
+      userId,
+    );
+
+    if (!selected) {
+      throw new Error("Não foi possível selecionar um quiz determinístico.");
+    }
+
+    const options = Array.isArray(selected.options) ? selected.options.slice(0, 4) : [];
+    if (options.length !== 4) {
+      throw new Error(`quiz_question sem 4 alternativas: ${selected.id}`);
+    }
 
     const { data: quiz, error: insertErr } = await supabaseAdmin
       .from("quizzes")
       .insert({
         user_id: userId,
-        question: String(aiResult.question || ""),
+        question: selected.question,
         options,
-        correct_option: correctOption,
-        explanation: String(aiResult.explanation || ""),
-        category,
+        correct_option: selected.correct_option,
+        explanation: selected.explanation,
+        category: selected.category,
       })
       .select()
       .single();
 
     if (insertErr) {
-      console.warn("[QUIZ] Não foi possível persistir o quiz; retornando quiz transitório:", insertErr.message);
-      const transientQuiz = {
-        id: `local-${crypto.randomUUID()}`,
-        user_id: userId,
-        question: String(aiResult.question || ""),
-        options,
-        correct_option: correctOption,
-        explanation: String(aiResult.explanation || ""),
-        category,
-        persisted: false,
-      };
-
-      return jsonResponse({ success: true, quiz: transientQuiz, persisted: false });
+      throw new Error(`Erro ao criar snapshot do quiz: ${insertErr.message}`);
     }
 
-    await logAgentInteraction(supabaseAdmin, {
+    console.log("[ADVENTURE] Quiz selecionado.", {
       userId,
-      agent: "guardian",
-      eventType: "GENERATE_QUIZ",
-      inputSummary: { recentQuizzes: recentQuizzes?.length || 0 },
-      output: quiz,
+      quizId: quiz.id,
+      quizQuestionId: selected.id,
+      category: selected.category,
+      difficulty: selected.difficulty,
+      recentAvoided: recentQuestionIds.size,
     });
 
-    return jsonResponse({ success: true, quiz });
+    return jsonResponse({
+      success: true,
+      persisted: true,
+      source: "quiz_questions",
+      algorithm: ADVENTURE_ALGORITHM_VERSION,
+      quiz: {
+        ...quiz,
+        quiz_question_id: selected.id,
+        difficulty: selected.difficulty,
+        signal_key: selected.signal_key,
+        schema_version: ADVENTURE_SCHEMA_VERSION,
+      },
+    });
   } catch (error: any) {
-    console.error("[QUIZ ERROR]:", error.message);
-    return jsonResponse({ error: error.message }, 400);
+    console.error("[ADVENTURE] Erro ao gerar quiz:", error.message);
+    return jsonResponse({ error: error.message }, getErrorStatus(error));
   }
 });

@@ -1,5 +1,18 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { corsHeaders, jsonResponse } from "../_shared/supabase-admin.ts";
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Max-Age": "86400",
+};
+
+function jsonResponse(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    status,
+  });
+}
 
 interface FeedItem {
   title: string;
@@ -101,7 +114,11 @@ async function fetchFeedItems(urls: string[], limit: number) {
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response(null, { headers: corsHeaders, status: 204 });
+  }
+
+  if (!["GET", "POST"].includes(req.method)) {
+    return jsonResponse({ error: "method_not_allowed" }, 405);
   }
 
   try {
@@ -118,7 +135,7 @@ serve(async (req: Request) => {
       fetchedAt: new Date().toISOString(),
     });
   } catch (error: any) {
-    console.error("[BIOSPHERE FEED ERROR]:", error.message);
+    console.error("[BIOSPHERE] Feed error:", error.message);
     return jsonResponse({ error: error.message }, 400);
   }
 });

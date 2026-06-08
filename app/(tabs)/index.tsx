@@ -102,7 +102,7 @@ export default function HabitatScreen() {
         setLeaves(data.leaves);
       }
     } catch (error) {
-      console.error("[HABITA] Erro ao carregar folhas:", error);
+      console.error("[HABITAT] Erro ao carregar folhas:", error);
       setLeaves(FALLBACK_LEAVES);
     } finally {
       setLoadingLeaves(false);
@@ -120,7 +120,7 @@ export default function HabitatScreen() {
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <Text style={styles.eyebrow}>Habita</Text>
+        <Text style={styles.eyebrow}>Habitat</Text>
         <Text style={styles.title}>A Árvore Ancestral</Text>
         <Text style={styles.subtitle}>
           Toque em uma das quatro folhas para ouvir uma memória criada a partir da sua jornada.

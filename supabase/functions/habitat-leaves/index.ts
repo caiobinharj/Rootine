@@ -1,6 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { logAgentInteraction, runJsonAgent } from "../_shared/agents.ts";
-import { corsHeaders, createSupabaseAdmin, jsonResponse } from "../_shared/supabase-admin.ts";
+import {
+  corsHeaders,
+  createSupabaseAdmin,
+  getErrorStatus,
+  jsonResponse,
+  requireUserIdFromJwt,
+} from "../_shared/supabase-admin.ts";
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -11,15 +17,28 @@ serve(async (req: Request) => {
     const { userId, forceRefresh = false } = await req.json();
     if (!userId) throw new Error("O parâmetro 'userId' é obrigatório.");
 
+    await requireUserIdFromJwt(req, userId);
+
     const supabaseAdmin = createSupabaseAdmin();
+    console.log("[HABITAT] Carregando folhas.", { userId, forceRefresh });
+
+    let canPersistLeaves = true;
 
     if (!forceRefresh) {
-      const { data: cachedLeaves } = await supabaseAdmin
+      const { data: cachedLeaves, error: cachedLeavesError } = await supabaseAdmin
         .from("habitat_leaves")
         .select("id, position, title, message, source_event, created_at")
         .eq("user_id", userId)
         .order("position", { ascending: true })
         .limit(4);
+
+      if (cachedLeavesError) {
+        canPersistLeaves = false;
+        console.warn("[HABITAT] Cache indisponível; usando folhas transitórias.", {
+          userId,
+          message: cachedLeavesError.message,
+        });
+      }
 
       if (cachedLeaves && cachedLeaves.length === 4) {
         return jsonResponse({ success: true, leaves: cachedLeaves, cached: true });
@@ -29,12 +48,12 @@ serve(async (req: Request) => {
     const [{ data: profile }, { data: missions }, { data: answers }] = await Promise.all([
       supabaseAdmin
         .from("profiles")
-        .select("xp, socioeconomic_context, learned_preferences, affinities, impact_totals")
+        .select("xp, socioeconomic_context, learned_preferences, affinities")
         .eq("id", userId)
         .single(),
       supabaseAdmin
         .from("user_missions")
-        .select("title, description, status, ai_justification, mission_type, created_at")
+        .select("title, description, status, ai_justification, created_at")
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
         .limit(8),
@@ -91,8 +110,6 @@ Expected JSON:
 
     const leaves = Array.isArray(aiResult.leaves) ? aiResult.leaves.slice(0, 4) : [];
 
-    await supabaseAdmin.from("habitat_leaves").delete().eq("user_id", userId);
-
     const rows = leaves.map((leaf: any, index: number) => ({
       user_id: userId,
       position: Number(leaf.position) || index + 1,
@@ -101,13 +118,32 @@ Expected JSON:
       source_event: leaf.source_event || {},
     }));
 
+    if (!canPersistLeaves) {
+      return jsonResponse({ success: true, leaves: rows, cached: false, transient: true });
+    }
+
+    const { error: deleteErr } = await supabaseAdmin.from("habitat_leaves").delete().eq("user_id", userId);
+    if (deleteErr) {
+      console.warn("[HABITAT] Não foi possível limpar cache; retornando folhas transitórias.", {
+        userId,
+        message: deleteErr.message,
+      });
+      return jsonResponse({ success: true, leaves: rows, cached: false, transient: true });
+    }
+
     const { data: inserted, error: insertErr } = await supabaseAdmin
       .from("habitat_leaves")
       .insert(rows)
       .select("id, position, title, message, source_event, created_at")
       .order("position", { ascending: true });
 
-    if (insertErr) throw new Error(`Erro ao salvar folhas: ${insertErr.message}`);
+    if (insertErr) {
+      console.warn("[HABITAT] Não foi possível salvar folhas; retornando transitórias.", {
+        userId,
+        message: insertErr.message,
+      });
+      return jsonResponse({ success: true, leaves: rows, cached: false, transient: true });
+    }
 
     await logAgentInteraction(supabaseAdmin, {
       userId,
@@ -119,7 +155,7 @@ Expected JSON:
 
     return jsonResponse({ success: true, leaves: inserted || rows, cached: false });
   } catch (error: any) {
-    console.error("[HABITAT ERROR]:", error.message);
-    return jsonResponse({ error: error.message }, 400);
+    console.error("[HABITAT] Erro ao carregar folhas:", error.message);
+    return jsonResponse({ error: error.message }, getErrorStatus(error));
   }
 });

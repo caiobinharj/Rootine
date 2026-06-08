@@ -22,17 +22,37 @@ export default function MissionEditModal({
   onClose,
 }: MissionEditModalProps) {
   const [input, setInput] = useState("");
-  const { editMission, loading } = useEcoStore();
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [attemptedSave, setAttemptedSave] = useState(false);
+  const { editMission, loading, lastError } = useEcoStore();
 
   const handleEdit = async () => {
     if (!input.trim()) return;
+    setLocalError(null);
+    setAttemptedSave(true);
     const {
       data: { user },
     } = await supabase.auth.getUser();
-    if (!user) return;
+    if (!user) {
+      setLocalError("Entre novamente para editar a missão.");
+      return;
+    }
 
-    await editMission(user.id, missionId, input);
-    setInput("");
+    const edited = await editMission(user.id, missionId, input);
+    if (edited) {
+      setInput("");
+      setLocalError(null);
+      setAttemptedSave(false);
+      onClose();
+    } else {
+      setLocalError("A edição não foi salva. A missão original continua ativa.");
+    }
+  };
+
+  const handleClose = () => {
+    if (loading) return;
+    setLocalError(null);
+    setAttemptedSave(false);
     onClose();
   };
 
@@ -40,9 +60,9 @@ export default function MissionEditModal({
     <Modal visible={visible} animationType="slide" transparent>
       <View style={styles.overlay}>
         <View style={styles.modalContent}>
-          <Text style={styles.title}>Refinar Missão com IA ✨</Text>
+          <Text style={styles.title}>Adaptar missão</Text>
           <Text style={styles.subtitle}>
-            A missão não se encaixa na sua rotina? Descreva o motivo e o Guardião irá adaptá-la para você, aprendendo suas restrições.
+            Descreva o que não encaixa na sua rotina. A adaptação mantém o objetivo ambiental e respeita suas restrições.
           </Text>
 
           <TextInput
@@ -55,10 +75,16 @@ export default function MissionEditModal({
             editable={!loading}
           />
 
+          {localError || (attemptedSave && lastError) ? (
+            <View style={styles.errorBox}>
+              <Text style={styles.errorText}>{localError || lastError}</Text>
+            </View>
+          ) : null}
+
           <View style={styles.actions}>
             <TouchableOpacity
               style={styles.cancelButton}
-              onPress={onClose}
+              onPress={handleClose}
               disabled={loading}
             >
               <Text style={styles.cancelText}>Cancelar</Text>
@@ -73,7 +99,7 @@ export default function MissionEditModal({
               disabled={loading || !input.trim()}
             >
               <Text style={styles.submitText}>
-                {loading ? "Adaptando..." : "Refinar Missão"}
+                {loading ? "Salvando..." : localError ? "Tentar novamente" : "Adaptar missão"}
               </Text>
             </TouchableOpacity>
           </View>
@@ -116,7 +142,20 @@ const styles = StyleSheet.create({
     textAlignVertical: "top",
     fontSize: 16,
     color: "#333",
-    marginBottom: 24,
+    marginBottom: 16,
+  },
+  errorBox: {
+    backgroundColor: "#FFEBEE",
+    borderLeftColor: "#C62828",
+    borderLeftWidth: 4,
+    borderRadius: 8,
+    padding: 10,
+    marginBottom: 16,
+  },
+  errorText: {
+    color: "#B71C1C",
+    fontSize: 13,
+    lineHeight: 18,
   },
   actions: {
     flexDirection: "row",

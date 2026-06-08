@@ -15,10 +15,34 @@ const SWIPE_THRESHOLD = 120;
 
 interface SwipeFlashcardProps {
   question: string;
+  category?: string | null;
+  signalType?: string | null;
   onSwipe: (answer: boolean | null) => void;
 }
 
-export const SwipeFlashcard = ({ question, onSwipe }: SwipeFlashcardProps) => {
+const CATEGORY_LABELS: Record<string, string> = {
+  water: "Água",
+  energy: "Energia",
+  waste: "Resíduos",
+  transport: "Transporte",
+  food: "Alimentação",
+  consumption: "Consumo",
+};
+
+const SIGNAL_LABELS: Record<string, string> = {
+  habit: "Hábito",
+  capability: "Capacidade",
+  constraint: "Restrição",
+  preference: "Preferência",
+  interest: "Interesse",
+};
+
+export const SwipeFlashcard = ({
+  question,
+  category,
+  signalType,
+  onSwipe,
+}: SwipeFlashcardProps) => {
   const translateX = useSharedValue(0);
   const translateY = useSharedValue(0);
   const cardOpacity = useSharedValue(1);
@@ -108,8 +132,16 @@ export const SwipeFlashcard = ({ question, onSwipe }: SwipeFlashcardProps) => {
           <Text style={[styles.overlayText, { color: "#616161" }]}>PULAR</Text>
         </Animated.View>
 
-        {/* Conteúdo do Card */}
-        <Text style={styles.typeLabel}>FLASHCARD DIÁRIO</Text>
+        <View style={styles.metaRow}>
+          <Text style={styles.typeLabel}>
+            {CATEGORY_LABELS[String(category ?? "")] ?? "Aventura"}
+          </Text>
+          {signalType ? (
+            <Text style={styles.signalLabel}>
+              {SIGNAL_LABELS[String(signalType)] ?? signalType}
+            </Text>
+          ) : null}
+        </View>
         <Text style={styles.questionText}>{question}</Text>
 
         <View style={styles.hints}>
@@ -166,12 +198,26 @@ const styles = StyleSheet.create({
     marginTop: 8,
     letterSpacing: 2,
   },
+  metaRow: {
+    flexDirection: "row",
+    gap: 8,
+    alignItems: "center",
+    marginBottom: 16,
+  },
   typeLabel: {
     fontSize: 12,
     fontWeight: "bold",
     color: "#4CAF50",
-    marginBottom: 16,
     letterSpacing: 1.5,
+  },
+  signalLabel: {
+    backgroundColor: "#E8F5E9",
+    borderRadius: 8,
+    color: "#2E7D32",
+    fontSize: 11,
+    fontWeight: "700",
+    paddingHorizontal: 8,
+    paddingVertical: 4,
   },
   questionText: {
     fontSize: 22,

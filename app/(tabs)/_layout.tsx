@@ -19,21 +19,21 @@ export default function TabLayout() {
       <Tabs.Screen
         name="flashcards"
         options={{
-          title: 'Trilha',
+          title: 'Aventura',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="bolt.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="adventure"
         options={{
-          title: 'Aventura',
+          title: 'Trilha',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="map.fill" color={color} />,
         }}
       />
       <Tabs.Screen
         name="index"
         options={{
-          title: 'Habita',
+          title: 'Habitat',
           tabBarIcon: ({ color }) => <IconSymbol size={34} name="leaf.fill" color={color} />,
           tabBarItemStyle: {
             transform: [{ translateY: -8 }],
@@ -60,7 +60,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="admin"
         options={{
-          href: null,
+          href: __DEV__ ? "/(tabs)/admin" : null,
           title: 'Admin',
           tabBarIcon: ({ color }) => <IconSymbol size={28} name="gear" color={color} />,
         }}

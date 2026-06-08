@@ -43,6 +43,7 @@ export default function AdventureScreen() {
 
   const handleGenerate = async (missionType: "daily" | "specialized") => {
     if (!userId) return;
+    console.log("[TRILHA] Solicitando geração de missão:", missionType);
     await generateMissions(userId, missionType);
   };
 
@@ -51,7 +52,7 @@ export default function AdventureScreen() {
       <View style={styles.centered}>
         <ActivityIndicator size="large" color="#4CAF50" />
         <Text style={styles.loadingText}>
-          O Aventureiro está compondo sua próxima jornada...
+          A Trilha está compondo sua próxima missão...
         </Text>
       </View>
     );
@@ -59,9 +60,9 @@ export default function AdventureScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Aventura</Text>
+      <Text style={styles.title}>Trilha</Text>
       <Text style={styles.subtitle}>
-        Missões diárias e especializadas criadas pelo Agente Aventureiro.
+        Missões diárias e especializadas ajustadas ao seu perfil e aos seus fatos aprendidos.
       </Text>
 
       <View style={styles.actions}>
@@ -81,7 +82,7 @@ export default function AdventureScreen() {
           <Text style={styles.errorTitle}>Missão não gerada</Text>
           <Text style={styles.errorText}>{lastError}</Text>
           <Text style={styles.errorHint}>
-            Verifique se a função `generate-missions`, a secret `OPENAI_API_KEY` e a migration do Supabase foram aplicadas.
+            Tente novamente depois de concluir o onboarding ou responder a Aventura para fortalecer o perfil.
           </Text>
         </View>
       ) : null}
@@ -102,16 +103,18 @@ export default function AdventureScreen() {
             missionId={item.id}
             title={item.title}
             description={item.description}
-            category={item.ai_justification?.category || "general"}
-            justification={item.ai_justification?.reason || ""}
+            category={item.category || item.ai_justification?.category || "consumption"}
+            justification={
+              item.personalization_reason || item.ai_justification?.reason || ""
+            }
             expiresAt={item.expires_at}
-            xp={item.mission_type === "specialized" ? 25 : 10}
+            xp={item.xp_reward ?? (item.mission_type === "specialized" ? 25 : 10)}
           />
         )}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
             <Text style={styles.emptyText}>
-              Nenhuma missão ativa. Complete a Trilha ou peça uma nova aventura.
+              Nenhuma missão ativa. Peça uma nova missão para continuar sua Trilha.
             </Text>
           </View>
         }

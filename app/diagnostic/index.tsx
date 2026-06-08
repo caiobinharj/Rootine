@@ -1,63 +1,17 @@
 import { DiagnosticCard } from "@/components/DiagnosticCard";
 import { ProgressBar } from "@/components/ProgressBar";
+import {
+  ONBOARDING_QUESTIONS,
+  type OnboardingAnswers,
+} from "@/lib/domain/onboarding";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
-import { ActivityIndicator, StyleSheet, Text, View } from "react-native";
-
-// Perguntas de Onboarding — captura contexto socioeconômico (template profiles.socioeconomic_context)
-const ONBOARDING_QUESTIONS = [
-  {
-    id: "housing",
-    label: "Sua moradia atual é:",
-    options: [
-      { label: "República", value: "shared_housing" },
-      { label: "Apartamento", value: "apartment" },
-      { label: "Casa", value: "house" },
-    ],
-  },
-  {
-    id: "mobility",
-    label: "Como você se locomove no dia a dia?",
-    options: [
-      { label: "Carro", value: "car" },
-      { label: "Transporte Público", value: "public_transport" },
-      { label: "Bicicleta", value: "bicycle" },
-      { label: "A pé", value: "walking" },
-    ],
-  },
-  {
-    id: "diet",
-    label: "Possui alguma restrição alimentar?",
-    options: [
-      { label: "Nenhuma", value: "none" },
-      { label: "Vegetariano", value: "vegetarian" },
-      { label: "Vegano", value: "vegan" },
-    ],
-  },
-  {
-    id: "financial_friction",
-    label: "Como está sua disponibilidade financeira?",
-    options: [
-      { label: "Apertada", value: "high" },
-      { label: "Moderada", value: "medium" },
-      { label: "Confortável", value: "low" },
-    ],
-  },
-  {
-    id: "time_availability",
-    label: "Quanto tempo livre você tem no dia?",
-    options: [
-      { label: "Pouco", value: "low" },
-      { label: "Moderado", value: "medium" },
-      { label: "Bastante", value: "high" },
-    ],
-  },
-];
+import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
 
 export default function DiagnosticScreen() {
   const [currentStep, setCurrentStep] = useState(0);
-  const [answers, setAnswers] = useState<Record<string, string>>({});
+  const [answers, setAnswers] = useState<OnboardingAnswers>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
 
@@ -71,44 +25,48 @@ export default function DiagnosticScreen() {
     if (currentStep < ONBOARDING_QUESTIONS.length - 1) {
       setCurrentStep(currentStep + 1);
     } else {
-      // Última pergunta: montar JSON do template socioeconomic_context
       setIsSubmitting(true);
       try {
         const {
           data: { user },
+          error: userError,
         } = await supabase.auth.getUser();
 
-        if (user) {
-          const socioContext = {
-            constraints: {
-              housing: updatedAnswers.housing,
-              mobility: updatedAnswers.mobility,
-              diet: updatedAnswers.diet,
-            },
-            financial_friction: updatedAnswers.financial_friction,
-            time_availability: updatedAnswers.time_availability,
-          };
-
-          const { error } = await supabase.from("profiles").upsert(
-            {
-              id: user.id,
-              nome:
-                (user.user_metadata?.name as string | undefined) ||
-                user.email?.split("@")[0] ||
-                "Guardião",
-              xp: 1,
-              socioeconomic_context: socioContext,
-              onboarding_completed: true,
-            },
-            { onConflict: "id" },
-          );
-
-          if (error) throw error;
-
-          router.replace("/(tabs)");
+        if (userError || !user) {
+          throw userError ?? new Error("Sessão não encontrada.");
         }
+
+        console.log("[ONBOARDING] Finalizando onboarding.", {
+          userId: user.id,
+          answerCount: Object.keys(updatedAnswers).length,
+        });
+
+        const { data, error } = await supabase.functions.invoke(
+          "complete-onboarding",
+          {
+            body: {
+              userId: user.id,
+              answers: updatedAnswers,
+            },
+          },
+        );
+
+        if (error) throw error;
+        if (data?.error) throw new Error(String(data.error));
+
+        console.log("[ONBOARDING] Onboarding concluído.", {
+          userId: user.id,
+          eventCount: data?.event_count,
+          factCount: data?.fact_count,
+        });
+
+        router.replace("/(tabs)");
       } catch (error) {
         console.error("Erro ao salvar onboarding:", error);
+        Alert.alert(
+          "Não foi possível salvar agora",
+          "Suas respostas continuam nesta tela. Tente finalizar novamente em instantes.",
+        );
       } finally {
         setIsSubmitting(false);
       }

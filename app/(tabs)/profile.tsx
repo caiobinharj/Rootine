@@ -65,20 +65,14 @@ export default function ProfileScreen() {
       if (user) {
         await fetchProfile(user.id);
 
-        const [{ data: profile }, { data: missionRows }, { data: quizRows }, { data: flashcardRows }] =
+        const [{ data: profile }, { data: missionRows }, { data: flashcardRows }] =
           await Promise.all([
             supabase.from("profiles").select("*").eq("id", user.id).single(),
             supabase
               .from("user_missions")
-              .select("title, status, mission_type, created_at, ai_justification")
+              .select("title, status, created_at, ai_justification")
               .eq("user_id", user.id)
               .order("created_at", { ascending: false })
-              .limit(8),
-            supabase
-              .from("user_quiz_answers")
-              .select("selected_option, correct, answered_at, quizzes(question, category)")
-              .eq("user_id", user.id)
-              .order("answered_at", { ascending: false })
               .limit(8),
             supabase
               .from("user_flashcards_answers")
@@ -89,8 +83,13 @@ export default function ProfileScreen() {
           ]);
 
         setProfileData(profile);
-        setMissions(missionRows || []);
-        setQuizHistory(quizRows || []);
+        setMissions(
+          (missionRows || []).map((mission: any) => ({
+            ...mission,
+            mission_type: mission.ai_justification?.mission_type || "daily",
+          })),
+        );
+        setQuizHistory([]);
         setFlashcardHistory(flashcardRows || []);
       }
     } finally {

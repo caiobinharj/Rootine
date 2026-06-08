@@ -14,7 +14,7 @@ interface DiagnosticCardProps {
   question: {
     id: string;
     label: string;
-    options: { label: string; value: string }[];
+    options: readonly { label: string; value: string }[];
   };
   onAnswer: (value: string) => void;
 }
@@ -26,7 +26,7 @@ export const DiagnosticCard = ({ question, onAnswer }: DiagnosticCardProps) => {
       exiting={FadeOutLeft}
       style={styles.card}
     >
-      <Text style={styles.typeLabel}>PERFIL SOCIOECONÔMICO</Text>
+      <Text style={styles.typeLabel}>DIAGNÓSTICO INICIAL</Text>
       <Text style={styles.questionText}>{question.label}</Text>
 
       <View style={styles.optionsContainer}>
@@ -36,9 +36,7 @@ export const DiagnosticCard = ({ question, onAnswer }: DiagnosticCardProps) => {
             style={styles.optionButton}
             onPress={() => onAnswer(opt.value)}
           >
-            <Text style={styles.optionText}>
-              {opt.label.toUpperCase()}
-            </Text>
+            <Text style={styles.optionText}>{opt.label}</Text>
           </TouchableOpacity>
         ))}
       </View>

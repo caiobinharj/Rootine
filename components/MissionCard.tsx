@@ -28,7 +28,7 @@ export default function MissionCard({
   xp,
   expiresAt,
 }: MissionCardProps) {
-  const { completeMission, refuseMission } = useEcoStore();
+  const { completeMission, failMission, refuseMission } = useEcoStore();
   const [editModalVisible, setEditModalVisible] = useState(false);
 
   const timeLeft = dayjs(expiresAt).fromNow();
@@ -69,6 +69,13 @@ export default function MissionCard({
             onPress={() => refuseMission(missionId)}
           >
             <Text style={styles.refuseText}>Recusar</Text>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[styles.button, styles.failButton]}
+            onPress={() => failMission(missionId)}
+          >
+            <Text style={styles.failText}>Não consegui</Text>
           </TouchableOpacity>
 
           <TouchableOpacity
@@ -176,19 +183,28 @@ const styles = StyleSheet.create({
     color: "#4A148C",
     lineHeight: 18,
   },
-  actions: { flexDirection: "row", gap: 12 },
+  actions: { flexDirection: "row", gap: 8 },
   button: {
     flex: 1,
-    paddingVertical: 14,
+    minHeight: 46,
+    paddingHorizontal: 6,
+    paddingVertical: 12,
     borderRadius: 12,
     alignItems: "center",
+    justifyContent: "center",
   },
   completeButton: { backgroundColor: "#4CAF50" },
+  failButton: {
+    backgroundColor: "#FFF8E1",
+    borderWidth: 1,
+    borderColor: "#F9A825",
+  },
   refuseButton: {
     backgroundColor: "transparent",
     borderWidth: 1,
     borderColor: "#FF5252",
   },
-  buttonText: { color: "#FFF", fontWeight: "bold", fontSize: 16 },
-  refuseText: { color: "#FF5252", fontWeight: "bold", fontSize: 16 },
+  buttonText: { color: "#FFF", fontWeight: "bold", fontSize: 14 },
+  failText: { color: "#F57F17", fontWeight: "bold", fontSize: 13, textAlign: "center" },
+  refuseText: { color: "#FF5252", fontWeight: "bold", fontSize: 14 },
 });

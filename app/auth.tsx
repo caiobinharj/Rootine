@@ -105,7 +105,7 @@ export default function AuthScreen() {
           const { error: profileError } = await supabase.from("profiles").upsert(
             {
               id: data.user.id,
-              nome: fullName.trim() || data.user.email?.split("@")[0] || "Guardião",
+              name: fullName.trim() || data.user.email?.split("@")[0] || "Guardião",
               xp: 1,
               onboarding_completed: false,
             },

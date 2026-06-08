@@ -1,6 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { logAgentInteraction, runJsonAgent } from "../_shared/agents.ts";
-import { corsHeaders, createSupabaseAdmin, jsonResponse } from "../_shared/supabase-admin.ts";
+import {
+  corsHeaders,
+  createSupabaseAdmin,
+  getErrorStatus,
+  jsonResponse,
+  requireUserIdFromJwt,
+} from "../_shared/supabase-admin.ts";
 
 serve(async (req: Request) => {
   if (req.method === "OPTIONS") {
@@ -13,17 +19,24 @@ serve(async (req: Request) => {
       throw new Error("Parâmetros obrigatórios: userId, message");
     }
 
-    const supabaseAdmin = createSupabaseAdmin();
+    await requireUserIdFromJwt(req, userId);
 
-    const [{ data: profile }, { data: missions }, { data: flashcards }, { data: quizzes }] = await Promise.all([
+    const supabaseAdmin = createSupabaseAdmin();
+    console.log("[SCIENTIST] Chat solicitado.", {
+      userId,
+      messageLength: String(message).length,
+      historyCount: Array.isArray(history) ? history.length : 0,
+    });
+
+    const [{ data: profile }, { data: missions }, { data: flashcards }] = await Promise.all([
       supabaseAdmin
         .from("profiles")
-        .select("xp, socioeconomic_context, learned_preferences, affinities, impact_totals")
+        .select("xp, socioeconomic_context, learned_preferences, affinities")
         .eq("id", userId)
         .single(),
       supabaseAdmin
         .from("user_missions")
-        .select("title, status, mission_type, ai_justification, created_at")
+        .select("title, status, ai_justification, created_at")
         .eq("user_id", userId)
         .order("created_at", { ascending: false })
         .limit(8),
@@ -32,12 +45,6 @@ serve(async (req: Request) => {
         .select("answer, flashcards(question)")
         .eq("user_id", userId)
         .order("id", { ascending: false })
-        .limit(8),
-      supabaseAdmin
-        .from("user_quiz_answers")
-        .select("selected_option, correct, quizzes(question, category, explanation)")
-        .eq("user_id", userId)
-        .order("answered_at", { ascending: false })
         .limit(8),
     ]);
 
@@ -63,7 +70,7 @@ Expected JSON:
         profile,
         recent_missions: missions || [],
         recent_flashcards: flashcards || [],
-        recent_quizzes: quizzes || [],
+        recent_quizzes: [],
       },
       fallback: {
         answer: "Ainda não consegui consultar o agente cientista com segurança. Posso sugerir começar com um protocolo simples: escolha uma ação sustentável pequena, repita por três dias e observe o que facilitou ou dificultou.",
@@ -87,7 +94,10 @@ Expected JSON:
       userId,
       agent: "scientist",
       eventType: "SCIENTIST_CHAT",
-      inputSummary: { message },
+      inputSummary: {
+        messageLength: String(message).length,
+        historyCount: Array.isArray(history) ? history.length : 0,
+      },
       output: aiResult,
       status: usedFallback ? "error" : "success",
       errorMessage: usedFallback ? String(aiResult._fallback_reason) : undefined,
@@ -95,7 +105,7 @@ Expected JSON:
 
     return jsonResponse({ success: true, ...aiResult });
   } catch (error: any) {
-    console.error("[SCIENTIST CHAT ERROR]:", error.message);
-    return jsonResponse({ error: error.message }, 400);
+    console.error("[SCIENTIST] Erro no chat:", error.message);
+    return jsonResponse({ error: error.message }, getErrorStatus(error));
   }
 });

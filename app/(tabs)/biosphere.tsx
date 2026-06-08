@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { supabaseUrl } from "@/lib/supabase";
 import React, { useCallback, useEffect, useState } from "react";
 import {
   ActivityIndicator,
@@ -66,8 +66,29 @@ export default function BiosphereScreen() {
     setFeedError(null);
 
     try {
-      const { data, error } = await supabase.functions.invoke("biosphere-feed");
-      if (error) throw error;
+      if (!supabaseUrl) {
+        throw new Error("URL do Supabase não configurada.");
+      }
+
+      const response = await fetch(`${supabaseUrl}/functions/v1/biosphere-feed`, {
+        method: "GET",
+      });
+
+      const responseText = await response.text();
+      let data: any = {};
+      try {
+        data = responseText ? JSON.parse(responseText) : {};
+      } catch {
+        data = { error: responseText };
+      }
+
+      if (!response.ok) {
+        throw new Error(
+          data?.message ||
+            data?.error ||
+            `Não foi possível carregar o feed. Status ${response.status}.`,
+        );
+      }
 
       setNews(Array.isArray(data?.news) ? data.news : []);
       setEvents(Array.isArray(data?.events) ? data.events : []);
