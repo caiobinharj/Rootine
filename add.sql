@@ -1269,4 +1269,91 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_missions_user_generation_request_unique_i
   ON public.user_missions (user_id, generation_request_id)
   WHERE generation_request_id IS NOT NULL;
 
+-- Biosfera comunitaria real: posts publicos autenticados com RLS.
+CREATE TABLE IF NOT EXISTS public.biosphere_posts (
+  id uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  author_name text NOT NULL DEFAULT 'Guardião Rootine',
+  post_type text NOT NULL DEFAULT 'community',
+  title text NOT NULL,
+  body text NOT NULL,
+  category text,
+  impact_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+  achievement_key text REFERENCES public.achievement_definitions(key) ON DELETE SET NULL,
+  visibility text NOT NULL DEFAULT 'public',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+DO $$ BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'biosphere_posts_type_check'
+      AND conrelid = 'public.biosphere_posts'::regclass
+  ) THEN
+    ALTER TABLE public.biosphere_posts
+      ADD CONSTRAINT biosphere_posts_type_check
+      CHECK (post_type IN ('community','impact_milestone','achievement_share','challenge')) NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'biosphere_posts_visibility_check'
+      AND conrelid = 'public.biosphere_posts'::regclass
+  ) THEN
+    ALTER TABLE public.biosphere_posts
+      ADD CONSTRAINT biosphere_posts_visibility_check
+      CHECK (visibility IN ('public','hidden')) NOT VALID;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint
+    WHERE conname = 'biosphere_posts_category_check'
+      AND conrelid = 'public.biosphere_posts'::regclass
+  ) THEN
+    ALTER TABLE public.biosphere_posts
+      ADD CONSTRAINT biosphere_posts_category_check
+      CHECK (category IS NULL OR category IN ('water','energy','waste','transport','food','consumption')) NOT VALID;
+  END IF;
+END $$;
+
+DROP TRIGGER IF EXISTS biosphere_posts_touch_updated_at ON public.biosphere_posts;
+CREATE TRIGGER biosphere_posts_touch_updated_at
+  BEFORE UPDATE ON public.biosphere_posts
+  FOR EACH ROW
+  EXECUTE FUNCTION public.rootine_touch_updated_at();
+
+CREATE INDEX IF NOT EXISTS biosphere_posts_public_created_idx
+  ON public.biosphere_posts (visibility, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS biosphere_posts_user_created_idx
+  ON public.biosphere_posts (user_id, created_at DESC);
+
+ALTER TABLE public.biosphere_posts ENABLE ROW LEVEL SECURITY;
+
+DROP POLICY IF EXISTS biosphere_posts_select_public ON public.biosphere_posts;
+CREATE POLICY biosphere_posts_select_public
+  ON public.biosphere_posts FOR SELECT TO authenticated
+  USING (visibility = 'public');
+
+DROP POLICY IF EXISTS biosphere_posts_insert_own ON public.biosphere_posts;
+CREATE POLICY biosphere_posts_insert_own
+  ON public.biosphere_posts FOR INSERT TO authenticated
+  WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS biosphere_posts_update_own ON public.biosphere_posts;
+CREATE POLICY biosphere_posts_update_own
+  ON public.biosphere_posts FOR UPDATE TO authenticated
+  USING (user_id = auth.uid())
+  WITH CHECK (user_id = auth.uid());
+
+DROP POLICY IF EXISTS biosphere_posts_delete_own ON public.biosphere_posts;
+CREATE POLICY biosphere_posts_delete_own
+  ON public.biosphere_posts FOR DELETE TO authenticated
+  USING (user_id = auth.uid());
+
+ALTER TABLE public.biosphere_posts VALIDATE CONSTRAINT biosphere_posts_type_check;
+ALTER TABLE public.biosphere_posts VALIDATE CONSTRAINT biosphere_posts_visibility_check;
+ALTER TABLE public.biosphere_posts VALIDATE CONSTRAINT biosphere_posts_category_check;
+
 COMMIT;

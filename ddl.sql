@@ -746,3 +746,31 @@ END $$;
 CREATE UNIQUE INDEX IF NOT EXISTS user_missions_user_generation_request_unique_idx
   ON public.user_missions (user_id, generation_request_id)
   WHERE generation_request_id IS NOT NULL;
+
+-- ---------------------------------------------------------------------------
+-- PROMPT 10 - Biosfera comunitaria real.
+-- Posts publicos autenticados, sem ranking competitivo.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS public.biosphere_posts (
+  id uuid NOT NULL PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES public.profiles(id) ON DELETE CASCADE,
+  author_name text NOT NULL DEFAULT 'Guardião Rootine',
+  post_type text NOT NULL DEFAULT 'community',
+  title text NOT NULL,
+  body text NOT NULL,
+  category text,
+  impact_snapshot jsonb NOT NULL DEFAULT '{}'::jsonb,
+  achievement_key text REFERENCES public.achievement_definitions(key) ON DELETE SET NULL,
+  visibility text NOT NULL DEFAULT 'public',
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now(),
+  CONSTRAINT biosphere_posts_type_check CHECK (post_type IN ('community','impact_milestone','achievement_share','challenge')),
+  CONSTRAINT biosphere_posts_visibility_check CHECK (visibility IN ('public','hidden')),
+  CONSTRAINT biosphere_posts_category_check CHECK (category IS NULL OR category IN ('water','energy','waste','transport','food','consumption'))
+);
+
+CREATE INDEX IF NOT EXISTS biosphere_posts_public_created_idx
+  ON public.biosphere_posts (visibility, created_at DESC);
+
+CREATE INDEX IF NOT EXISTS biosphere_posts_user_created_idx
+  ON public.biosphere_posts (user_id, created_at DESC);

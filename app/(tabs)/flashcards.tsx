@@ -7,6 +7,7 @@ import { useFlashcardStore } from "@/store/useFlashcardStore";
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
+  ScrollView,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -316,9 +317,15 @@ export default function FlashcardsTab() {
 
   const renderQuizPanel = () => (
     <View style={styles.quizPanel}>
-      <Text style={styles.quizTitle}>Quiz da Aventura</Text>
+      <View style={styles.quizHeader}>
+        <View>
+          <Text style={styles.panelEyebrow}>Treino rápido</Text>
+          <Text style={styles.quizTitle}>Quiz da Aventura</Text>
+        </View>
+        <Text style={styles.quizBadge}>XP diário</Text>
+      </View>
       <Text style={styles.quizSubtitle}>
-        Um desafio curto escolhido pelo seu histórico e pelas categorias do app.
+        Uma pergunta curta para reforçar seu perfil sem usar IA no fluxo.
       </Text>
 
       {!quiz ? (
@@ -367,72 +374,102 @@ export default function FlashcardsTab() {
     </View>
   );
 
+  const renderStateShell = ({
+    eyebrow,
+    title,
+    subtitle,
+    infoText,
+    actionLabel,
+    onAction,
+    children,
+  }: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    infoText?: string;
+    actionLabel?: string;
+    onAction?: () => void;
+    children?: React.ReactNode;
+  }) => (
+    <GestureHandlerRootView style={styles.container}>
+      <ScrollView contentContainerStyle={styles.stateContent}>
+        <View style={styles.heroPanel}>
+          <Text style={styles.panelEyebrow}>{eyebrow}</Text>
+          <Text style={styles.messageTitle}>{title}</Text>
+          <Text style={styles.messageSubtitle}>{subtitle}</Text>
+
+          {infoText ? (
+            <View style={styles.adventureInfoBox}>
+              <Text style={styles.adventureInfoText}>{infoText}</Text>
+            </View>
+          ) : null}
+
+          {actionLabel && onAction ? (
+            <TouchableOpacity
+              style={styles.startButton}
+              onPress={onAction}
+              activeOpacity={0.86}
+            >
+              <Text style={styles.startButtonText}>{actionLabel}</Text>
+            </TouchableOpacity>
+          ) : null}
+
+          {nextBatchAt ? (
+            <View style={styles.countdownBox}>
+              <Text style={styles.countdownLabel}>Janela do lote</Text>
+              <BatchCountdown expiresAt={nextBatchAt} onExpired={() => {}} />
+            </View>
+          ) : null}
+        </View>
+
+        {children}
+      </ScrollView>
+    </GestureHandlerRootView>
+  );
+
   // ── Telas ─────────────────────────────────────────────────────
   if (screenState === "loading") {
     return (
-      <GestureHandlerRootView style={styles.centeredContainer}>
-        <ActivityIndicator size="large" color="#4CAF50" />
-        <Text style={styles.loadingText}>Carregando Aventura...</Text>
+      <GestureHandlerRootView style={styles.container}>
+        <View style={styles.loadingPanel}>
+          <ActivityIndicator size="large" color="#2E7D32" />
+          <Text style={styles.loadingText}>Carregando Aventura...</Text>
+          <Text style={styles.loadingSubtext}>Preparando cartas, quiz e progresso.</Text>
+        </View>
       </GestureHandlerRootView>
     );
   }
 
   if (screenState === "expired") {
-    return (
-      <GestureHandlerRootView style={styles.centeredContainer}>
-        <Text style={styles.bigEmoji}>🌿</Text>
-        <Text style={styles.messageTitle}>Lote expirado</Text>
-        <Text style={styles.messageSubtitle}>
-          O tempo acabou! Não se preocupe,{"\n"}amanhã você pode tentar de novo.
-        </Text>
-      </GestureHandlerRootView>
-    );
+    return renderStateShell({
+      eyebrow: "Lote encerrado",
+      title: "A janela desta Aventura acabou",
+      subtitle: "Você pode iniciar um novo lote quando a rotina permitir. O app não transforma pulos ou atrasos em bloqueios duros.",
+    });
   }
 
   if (screenState === "completed_today") {
-    return (
-      <GestureHandlerRootView style={styles.centeredContainer}>
-        <Text style={styles.bigEmoji}>🎉</Text>
-        <Text style={styles.messageTitle}>Parabéns!</Text>
-        <Text style={styles.messageSubtitle}>
-          Você concluiu este lote. Pode praticar de novo quando quiser!
-        </Text>
-        <TouchableOpacity
-          style={styles.startButton}
-          onPress={handleRequestBatch}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.startButtonText}>Praticar mais 🃏</Text>
-        </TouchableOpacity>
-        {nextBatchAt && (
-          <View style={styles.countdownBox}>
-            <Text style={styles.countdownLabel}>Próximo lote em:</Text>
-            <BatchCountdown expiresAt={nextBatchAt} onExpired={() => {}} />
-          </View>
-        )}
-        {renderQuizPanel()}
-      </GestureHandlerRootView>
-    );
+    return renderStateShell({
+      eyebrow: "Lote concluído",
+      title: "Questões de hoje concluídas",
+      subtitle: "Suas respostas foram registradas e já podem ajudar o app a entender melhor sua rotina.",
+      infoText: "Você já respondeu as questões do dia. A prática extra continua disponível, mas o ciclo principal de hoje está completo.",
+      actionLabel: "Praticar mais",
+      onAction: handleRequestBatch,
+      children: renderQuizPanel(),
+    });
   }
 
   if (screenState === "no_batch") {
-    return (
-      <GestureHandlerRootView style={styles.centeredContainer}>
-        <Text style={styles.bigEmoji}>🃏</Text>
-        <Text style={styles.messageTitle}>Aventura do Dia</Text>
-        <Text style={styles.messageSubtitle}>
-          Responda {BATCH_SIZE} cartas rápidas{"\n"}sobre seus hábitos de hoje.
-        </Text>
-        <TouchableOpacity
-          style={styles.startButton}
-          onPress={handleRequestBatch}
-          activeOpacity={0.8}
-        >
-          <Text style={styles.startButtonText}>Começar 🌱</Text>
-        </TouchableOpacity>
-        {renderQuizPanel()}
-      </GestureHandlerRootView>
-    );
+    return renderStateShell({
+      eyebrow: "Aventura do dia",
+      title: "Ajude o app a entender sua rotina",
+      subtitle: `Responda ${BATCH_SIZE} questões simples de Sim/Não para nos ajudar a criar missões mais adaptadas para você.`,
+      infoText: "Você também pode pular perguntas que não fizerem sentido. Pular não cria bloqueio automático no seu perfil.",
+      actionLabel: "Começar",
+      onAction: handleRequestBatch,
+      children: renderQuizPanel(),
+    });
   }
 
   // Batch ativo — swipe cards
@@ -443,15 +480,19 @@ export default function FlashcardsTab() {
     <GestureHandlerRootView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.headerTop}>
-          <Text style={styles.headerTitle}>Aventura</Text>
+          <View>
+            <Text style={styles.panelEyebrow}>Cartas em andamento</Text>
+            <Text style={styles.headerTitle}>Aventura</Text>
+          </View>
           {nextBatchAt && (
             <BatchCountdown expiresAt={nextBatchAt} onExpired={handleExpired} />
           )}
         </View>
         <ProgressBar progress={progress} />
-        <Text style={styles.counter}>
-          {answeredCount} de {totalCards}
-        </Text>
+        <View style={styles.progressSummary}>
+          <Text style={styles.counter}>{answeredCount} de {totalCards} respondidas</Text>
+          <Text style={styles.gestureHint}>Arraste: esquerda não, direita sim, cima pular</Text>
+        </View>
       </View>
 
       <View style={styles.cardArea}>
@@ -474,38 +515,78 @@ export default function FlashcardsTab() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#F0F4F8" },
-  centeredContainer: {
+  stateContent: {
+    flexGrow: 1,
+    paddingTop: 72,
+    paddingHorizontal: 20,
+    paddingBottom: 34,
+    justifyContent: "center",
+  },
+  heroPanel: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 22,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: "#E0E7E3",
+    shadowColor: "#1B5E20",
+    shadowOpacity: 0.08,
+    shadowRadius: 18,
+    shadowOffset: { width: 0, height: 8 },
+    elevation: 3,
+  },
+  loadingPanel: {
     flex: 1,
-    backgroundColor: "#F0F4F8",
     justifyContent: "center",
     alignItems: "center",
-    paddingHorizontal: 30,
+    paddingHorizontal: 28,
   },
   header: {
-    paddingTop: 60,
+    paddingTop: 58,
     paddingHorizontal: 20,
-    paddingBottom: 10,
+    paddingBottom: 16,
+    backgroundColor: "#FFFFFF",
+    borderBottomWidth: 1,
+    borderBottomColor: "#E3ECE6",
   },
   headerTop: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
-    marginBottom: 12,
+    marginBottom: 14,
+    gap: 14,
   },
-  headerTitle: { fontSize: 20, fontWeight: "bold", color: "#333" },
+  panelEyebrow: {
+    color: "#2E7D32",
+    fontSize: 11,
+    fontWeight: "800",
+    letterSpacing: 0.8,
+    textTransform: "uppercase",
+  },
+  headerTitle: { fontSize: 24, fontWeight: "bold", color: "#263238", marginTop: 3 },
+  progressSummary: {
+    marginTop: 10,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
   counter: {
-    marginTop: 6,
     fontSize: 12,
     fontWeight: "bold",
-    color: "#999",
-    letterSpacing: 1,
-    textAlign: "center",
+    color: "#2E7D32",
+  },
+  gestureHint: {
+    flex: 1,
+    color: "#78909C",
+    fontSize: 11,
+    fontWeight: "600",
+    textAlign: "right",
   },
   cardArea: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    paddingBottom: 40,
+    paddingBottom: 38,
     paddingHorizontal: 20,
   },
   cardErrorText: {
@@ -515,41 +596,74 @@ const styles = StyleSheet.create({
     maxWidth: 360,
     textAlign: "center",
   },
-  bigEmoji: { fontSize: 64, marginBottom: 16 },
-  messageTitle: { fontSize: 24, fontWeight: "bold", color: "#333", marginBottom: 8 },
+  messageTitle: {
+    fontSize: 26,
+    fontWeight: "bold",
+    color: "#263238",
+    lineHeight: 32,
+    marginTop: 8,
+    marginBottom: 8,
+  },
   messageSubtitle: {
     fontSize: 14,
-    color: "#666",
-    textAlign: "center",
+    color: "#546E7A",
     lineHeight: 22,
-    marginBottom: 28,
   },
-  loadingText: { marginTop: 16, fontSize: 16, color: "#333", fontWeight: "500" },
-  countdownBox: { alignItems: "center", gap: 8, marginBottom: 24 },
-  countdownLabel: { fontSize: 12, color: "#999", fontWeight: "600" },
+  loadingText: { marginTop: 16, fontSize: 17, color: "#263238", fontWeight: "800" },
+  loadingSubtext: { marginTop: 6, color: "#78909C", fontWeight: "600" },
+  adventureInfoBox: {
+    backgroundColor: "#F1F8E9",
+    borderRadius: 14,
+    padding: 13,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: "#D7E9CC",
+  },
+  adventureInfoText: { color: "#315C39", fontSize: 13, fontWeight: "700", lineHeight: 19 },
+  countdownBox: { alignItems: "center", gap: 8, marginTop: 18 },
+  countdownLabel: { fontSize: 12, color: "#607D8B", fontWeight: "700" },
   startButton: {
-    backgroundColor: "#4CAF50",
-    paddingVertical: 18,
-    paddingHorizontal: 48,
+    backgroundColor: "#2E7D32",
+    paddingVertical: 15,
+    paddingHorizontal: 28,
     borderRadius: 16,
-    elevation: 3,
-    shadowColor: "#4CAF50",
-    shadowOpacity: 0.3,
-    shadowRadius: 8,
-    shadowOffset: { width: 0, height: 3 },
+    alignItems: "center",
+    marginTop: 20,
+    shadowColor: "#1B5E20",
+    shadowOpacity: 0.18,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 5 },
+    elevation: 2,
   },
-  startButtonText: { color: "#FFF", fontSize: 18, fontWeight: "bold" },
+  startButtonText: { color: "#FFF", fontSize: 16, fontWeight: "bold" },
   quizPanel: {
     width: "100%",
     backgroundColor: "#FFF",
-    borderRadius: 20,
+    borderRadius: 18,
     padding: 18,
-    marginTop: 18,
+    marginTop: 16,
+    borderWidth: 1,
+    borderColor: "#E5E0EC",
+  },
+  quizHeader: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
   },
   quizTitle: { fontSize: 18, fontWeight: "bold", color: "#1B5E20" },
-  quizSubtitle: { color: "#607D8B", marginTop: 4, marginBottom: 12, textAlign: "center" },
+  quizBadge: {
+    backgroundColor: "#F3E5F5",
+    color: "#6A1B9A",
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    fontSize: 11,
+    fontWeight: "800",
+  },
+  quizSubtitle: { color: "#607D8B", marginTop: 8, marginBottom: 14, lineHeight: 19 },
   quizButton: {
-    backgroundColor: "#7B1FA2",
+    backgroundColor: "#6A1B9A",
     borderRadius: 12,
     paddingVertical: 13,
     alignItems: "center",
@@ -564,10 +678,12 @@ const styles = StyleSheet.create({
     marginBottom: 12,
   },
   quizOption: {
-    backgroundColor: "#F3E5F5",
-    borderRadius: 10,
+    backgroundColor: "#FAF7FC",
+    borderRadius: 12,
     padding: 12,
     marginBottom: 8,
+    borderWidth: 1,
+    borderColor: "#E5D6EA",
   },
   quizOptionCorrect: { backgroundColor: "#C8E6C9", borderWidth: 2, borderColor: "#2E7D32" },
   quizOptionWrong: { backgroundColor: "#FFCDD2", borderWidth: 2, borderColor: "#C62828" },

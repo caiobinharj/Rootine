@@ -454,6 +454,20 @@ Resultado esperado:
 - Biosfera tem RLS.
 - Fluxo principal funciona com e sem IA.
 
+Checklist manual final do Prompt 10:
+
+- `user_a` iniciante, pouco tempo e pouco dinheiro: completar onboarding, Aventura, gerar missão sem IA e confirmar missão compatível com tempo/custo/acesso.
+- `user_b` experiente: repetir fluxo e comparar fatos, dificuldade e categoria com `user_a`.
+- Edição banho/remédio: pedir adaptação e confirmar que a missão respeita cuidado de saúde sem sugerir alterar medicamento.
+- Geração sem IA: remover/desativar segredo de IA em ambiente de teste ou observar fallback; confirmar `ai_used=false` nos logs e missão válida por pattern.
+- Conclusão de missão: confirmar `xp_ledger`, `impact_ledger`, conquistas idempotentes, Perfil atualizado e Habitat subindo pela curva de XP.
+- Aventura sem IA: responder flashcards/quizzes e confirmar eventos/fatos determinísticos.
+- Recusa/falha: recusar e marcar `Não consegui`, gerar nova missão e confirmar que não há hard block total.
+- Schema drift: tentar inserir/observar valores fora do vocabulário (`déficit`, categoria inválida, action/status inválido) e confirmar bloqueio/normalização.
+- Retry recuperável: simular `ERR_NETWORK_CHANGED` em geração, edição, conclusão, recusa e falha; confirmar estado visual recuperável e ausência de duplicatas.
+- RLS: como `user_b`, tentar ler/alterar fatos, ledgers, missões e posts privados/own-only de `user_a`; confirmar bloqueio ou vazio.
+- Biosfera: `user_a` publica post/marco público; `user_b` lê o post público, mas não consegue editar/deletar o que não é dele.
+
 ## Checkpoint 10: após Prompt 11
 
 Funcionalidade testada: hardening, observabilidade e qualidade das missões.

@@ -1,5 +1,6 @@
-import { supabaseUrl } from "@/lib/supabase";
-import React, { useCallback, useEffect, useState } from "react";
+import { supabase, supabaseUrl } from "@/lib/supabase";
+import { useEcoStore } from "@/store/useEcoStore";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Linking,
@@ -7,11 +8,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
 
-type BiosphereTab = "forum" | "events" | "news";
+type BiosphereTab = "community" | "events" | "news";
 
 interface FeedItem {
   title: string;
@@ -21,26 +23,16 @@ interface FeedItem {
   publishedAt: string;
 }
 
-const forumPosts = [
-  {
-    author: "Lia, nível Broto",
-    title: "O que vocês fazem para lembrar de separar recicláveis?",
-    body: "Estou testando deixar uma caixa menor perto da cozinha. Parece simples, mas mudou meu fluxo.",
-    replies: 12,
-  },
-  {
-    author: "Rafael, guardião urbano",
-    title: "Missões curtas funcionam melhor no meu horário de almoço",
-    body: "Quando a missão cabe em 10 minutos eu consigo manter constância. Seria legal termos filtros por tempo.",
-    replies: 7,
-  },
-  {
-    author: "Mina, copa dourada",
-    title: "A árvore ficou mais bonita depois de uma semana",
-    body: "A parte visual me motivou bastante. Gostei de ver progresso como algo vivo, não só número.",
-    replies: 18,
-  },
-];
+interface BiospherePost {
+  id: string;
+  author_name: string;
+  post_type: "community" | "impact_milestone" | "achievement_share" | "challenge";
+  title: string;
+  body: string;
+  category: string | null;
+  impact_snapshot: any;
+  created_at: string;
+}
 
 function formatPublishedAt(value: string) {
   const date = new Date(value);
@@ -53,27 +45,38 @@ function formatPublishedAt(value: string) {
   });
 }
 
+function postTypeLabel(type: BiospherePost["post_type"]) {
+  if (type === "impact_milestone") return "Marco de impacto";
+  if (type === "achievement_share") return "Conquista compartilhada";
+  if (type === "challenge") return "Desafio comunitário";
+  return "Comunidade";
+}
+
 export default function BiosphereScreen() {
-  const [activeTab, setActiveTab] = useState<BiosphereTab>("forum");
+  const [activeTab, setActiveTab] = useState<BiosphereTab>("community");
   const [news, setNews] = useState<FeedItem[]>([]);
   const [events, setEvents] = useState<FeedItem[]>([]);
+  const [posts, setPosts] = useState<BiospherePost[]>([]);
   const [loadingFeed, setLoadingFeed] = useState(false);
+  const [loadingCommunity, setLoadingCommunity] = useState(false);
+  const [posting, setPosting] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
+  const [communityError, setCommunityError] = useState<string | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  const [postTitle, setPostTitle] = useState("");
+  const [postBody, setPostBody] = useState("");
+  const { impactTotals } = useEcoStore();
 
   const loadFeed = useCallback(async () => {
     setLoadingFeed(true);
     setFeedError(null);
 
     try {
-      if (!supabaseUrl) {
-        throw new Error("URL do Supabase não configurada.");
-      }
+      if (!supabaseUrl) throw new Error("URL do Supabase não configurada.");
 
       const response = await fetch(`${supabaseUrl}/functions/v1/biosphere-feed`, {
         method: "GET",
       });
-
       const responseText = await response.text();
       let data: any = {};
       try {
@@ -83,31 +86,110 @@ export default function BiosphereScreen() {
       }
 
       if (!response.ok) {
-        throw new Error(
-          data?.message ||
-            data?.error ||
-            `Não foi possível carregar o feed. Status ${response.status}.`,
-        );
+        throw new Error(data?.message || data?.error || `Feed indisponível (${response.status}).`);
       }
 
       setNews(Array.isArray(data?.news) ? data.news : []);
       setEvents(Array.isArray(data?.events) ? data.events : []);
       setFetchedAt(data?.fetchedAt ?? new Date().toISOString());
     } catch (error) {
-      console.error("[BIOSPHERE] Erro ao carregar feed:", error);
-      setFeedError(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível carregar notícias e eventos agora.",
-      );
+      console.error("[BIOSPHERE] Erro ao carregar RSS:", error);
+      setFeedError(error instanceof Error ? error.message : "Não foi possível carregar o feed.");
     } finally {
       setLoadingFeed(false);
     }
   }, []);
 
+  const loadCommunity = useCallback(async () => {
+    setLoadingCommunity(true);
+    setCommunityError(null);
+
+    try {
+      const { data, error } = await supabase
+        .from("biosphere_posts")
+        .select("id,author_name,post_type,title,body,category,impact_snapshot,created_at")
+        .eq("visibility", "public")
+        .order("created_at", { ascending: false })
+        .limit(40);
+
+      if (error) throw error;
+      setPosts((data || []) as BiospherePost[]);
+      console.log("[BIOSPHERE] Comunidade carregada.", { posts: data?.length ?? 0 });
+    } catch (error) {
+      console.error("[BIOSPHERE] Erro ao carregar comunidade:", error);
+      setCommunityError(
+        error instanceof Error
+          ? error.message
+          : "Não foi possível carregar a comunidade agora.",
+      );
+    } finally {
+      setLoadingCommunity(false);
+    }
+  }, []);
+
   useEffect(() => {
     loadFeed();
-  }, [loadFeed]);
+    loadCommunity();
+  }, [loadCommunity, loadFeed]);
+
+  const authorName = useCallback(async () => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) throw new Error("Usuário não autenticado.");
+
+    const { data } = await supabase
+      .from("profiles")
+      .select("name,nome")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    return {
+      userId: user.id,
+      name: data?.name || data?.nome || "Guardião Rootine",
+    };
+  }, []);
+
+  const publishPost = async (type: BiospherePost["post_type"] = "community") => {
+    if (posting) return;
+    const title = type === "impact_milestone"
+      ? "Marco de impacto compartilhado"
+      : postTitle.trim();
+    const body = type === "impact_milestone"
+      ? `Meu impacto estimado chegou a ${impactTotals.water_l}L de água, ${impactTotals.co2_kg}kg de CO2, ${impactTotals.waste_g}g de resíduos e ${impactTotals.energy_kwh}kWh de energia registrados.`
+      : postBody.trim();
+
+    if (!title || !body) {
+      setCommunityError("Escreva um título e uma mensagem antes de publicar.");
+      return;
+    }
+
+    setPosting(true);
+    setCommunityError(null);
+    try {
+      const author = await authorName();
+      const { error } = await supabase.from("biosphere_posts").insert({
+        user_id: author.userId,
+        author_name: author.name,
+        post_type: type,
+        title,
+        body,
+        impact_snapshot: type === "impact_milestone" ? impactTotals : {},
+        visibility: "public",
+      });
+
+      if (error) throw error;
+      setPostTitle("");
+      setPostBody("");
+      console.log("[BIOSPHERE] Post publicado.", { postType: type });
+      await loadCommunity();
+    } catch (error) {
+      console.error("[BIOSPHERE] Erro ao publicar:", error);
+      setCommunityError(error instanceof Error ? error.message : "Não foi possível publicar agora.");
+    } finally {
+      setPosting(false);
+    }
+  };
 
   const openLink = (url: string) => {
     if (!url) return;
@@ -137,9 +219,7 @@ export default function BiosphereScreen() {
       );
     }
 
-    if (items.length === 0) {
-      return <Text style={styles.emptyText}>{emptyLabel}</Text>;
-    }
+    if (items.length === 0) return <Text style={styles.emptyText}>{emptyLabel}</Text>;
 
     return items.map((item) => (
       <TouchableOpacity
@@ -148,9 +228,7 @@ export default function BiosphereScreen() {
         onPress={() => openLink(item.url)}
         activeOpacity={0.85}
       >
-        <Text style={styles.meta}>
-          {formatPublishedAt(item.publishedAt)} • {item.source}
-        </Text>
+        <Text style={styles.meta}>{formatPublishedAt(item.publishedAt)} • {item.source}</Text>
         <Text style={styles.cardTitle}>{item.title}</Text>
         <Text style={styles.cardBody}>{item.summary}</Text>
         <Text style={styles.linkText}>Abrir fonte original</Text>
@@ -158,31 +236,32 @@ export default function BiosphereScreen() {
     ));
   };
 
+  const communityCount = useMemo(() => posts.length, [posts]);
+
   return (
     <ScrollView
       style={styles.container}
       contentContainerStyle={styles.content}
       refreshControl={
-        activeTab !== "forum" ? (
-          <RefreshControl refreshing={loadingFeed} onRefresh={loadFeed} tintColor="#00796B" />
-        ) : undefined
+        <RefreshControl
+          refreshing={activeTab === "community" ? loadingCommunity : loadingFeed}
+          onRefresh={activeTab === "community" ? loadCommunity : loadFeed}
+          tintColor="#00796B"
+        />
       }
     >
       <Text style={styles.eyebrow}>Biosfera</Text>
       <Text style={styles.title}>Comunidade, território e mundo vivo</Text>
       <Text style={styles.subtitle}>
-        Notícias e eventos reais de Niterói e Rio de Janeiro, com foco em meio ambiente e
-        sustentabilidade.
+        Compartilhe marcos sem competição e acompanhe notícias e eventos ambientais do território.
       </Text>
       {fetchedAt ? (
-        <Text style={styles.updatedAt}>
-          Atualizado em {formatPublishedAt(fetchedAt)}
-        </Text>
+        <Text style={styles.updatedAt}>RSS atualizado em {formatPublishedAt(fetchedAt)}</Text>
       ) : null}
 
       <View style={styles.tabs}>
         {[
-          ["forum", "Fórum"],
+          ["community", `Comunidade (${communityCount})`],
           ["events", "Eventos"],
           ["news", "Notícias"],
         ].map(([id, label]) => (
@@ -198,33 +277,71 @@ export default function BiosphereScreen() {
         ))}
       </View>
 
-      {activeTab === "forum" && (
+      {activeTab === "community" && (
         <View style={styles.section}>
-          {forumPosts.map((post) => (
-            <View key={post.title} style={styles.card}>
-              <Text style={styles.meta}>{post.author}</Text>
+          <View style={styles.composer}>
+            <Text style={styles.sectionHint}>Compartilhe um marco, aprendizado ou convite simples.</Text>
+            <TextInput
+              value={postTitle}
+              onChangeText={setPostTitle}
+              placeholder="Título"
+              placeholderTextColor="#9E9E9E"
+              style={styles.input}
+            />
+            <TextInput
+              value={postBody}
+              onChangeText={setPostBody}
+              placeholder="Mensagem para a comunidade"
+              placeholderTextColor="#9E9E9E"
+              multiline
+              style={[styles.input, styles.bodyInput]}
+            />
+            <View style={styles.actionRow}>
+              <TouchableOpacity
+                style={[styles.publishButton, posting && styles.disabledButton]}
+                onPress={() => publishPost("community")}
+                disabled={posting}
+              >
+                <Text style={styles.publishText}>{posting ? "Publicando..." : "Publicar"}</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[styles.impactButton, posting && styles.disabledButton]}
+                onPress={() => publishPost("impact_milestone")}
+                disabled={posting}
+              >
+                <Text style={styles.impactButtonText}>Compartilhar impacto</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+
+          {communityError ? <Text style={styles.errorText}>{communityError}</Text> : null}
+          {loadingCommunity && posts.length === 0 ? <ActivityIndicator color="#00796B" /> : null}
+          {posts.map((post) => (
+            <View key={post.id} style={styles.card}>
+              <Text style={styles.meta}>
+                {postTypeLabel(post.post_type)} • {post.author_name} • {formatPublishedAt(post.created_at)}
+              </Text>
               <Text style={styles.cardTitle}>{post.title}</Text>
               <Text style={styles.cardBody}>{post.body}</Text>
-              <Text style={styles.footerText}>{post.replies} comentários</Text>
+              {post.category ? <Text style={styles.footerText}>{post.category}</Text> : null}
             </View>
           ))}
+          {!loadingCommunity && posts.length === 0 ? (
+            <Text style={styles.emptyText}>Ainda não há compartilhamentos comunitários.</Text>
+          ) : null}
         </View>
       )}
 
       {activeTab === "events" && (
         <View style={styles.section}>
-          <Text style={styles.sectionHint}>
-            Últimos 5 eventos encontrados via Google Notícias (Niterói / RJ).
-          </Text>
+          <Text style={styles.sectionHint}>Eventos encontrados via Google Notícias (Niterói / RJ).</Text>
           {renderFeedCards(events, "Nenhum evento recente encontrado para a região.")}
         </View>
       )}
 
       {activeTab === "news" && (
         <View style={styles.section}>
-          <Text style={styles.sectionHint}>
-            Últimas 5 notícias ambientais de Niterói e Rio de Janeiro.
-          </Text>
+          <Text style={styles.sectionHint}>Notícias ambientais de Niterói e Rio de Janeiro.</Text>
           {renderFeedCards(news, "Nenhuma notícia recente encontrada para a região.")}
         </View>
       )}
@@ -254,13 +371,46 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   tabButtonActive: { backgroundColor: "#00796B" },
-  tabText: { color: "#607D8B", fontWeight: "bold" },
+  tabText: { color: "#607D8B", fontWeight: "bold", fontSize: 12 },
   tabTextActive: { color: "#FFFFFF" },
   section: { marginTop: 18, gap: 12 },
-  sectionHint: { color: "#78909C", fontSize: 12, marginBottom: 4 },
+  sectionHint: { color: "#78909C", fontSize: 12, marginBottom: 4, lineHeight: 18 },
+  composer: {
+    backgroundColor: "#FFFFFF",
+    borderRadius: 16,
+    padding: 14,
+    borderLeftWidth: 4,
+    borderLeftColor: "#00796B",
+    gap: 10,
+  },
+  input: {
+    backgroundColor: "#F5F5F5",
+    borderRadius: 12,
+    padding: 12,
+    color: "#263238",
+  },
+  bodyInput: { minHeight: 86, textAlignVertical: "top" },
+  actionRow: { flexDirection: "row", gap: 10 },
+  publishButton: {
+    flex: 1,
+    backgroundColor: "#00796B",
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  impactButton: {
+    flex: 1,
+    backgroundColor: "#E0F2F1",
+    borderRadius: 12,
+    paddingVertical: 12,
+    alignItems: "center",
+  },
+  disabledButton: { opacity: 0.6 },
+  publishText: { color: "#FFF", fontWeight: "bold" },
+  impactButtonText: { color: "#00695C", fontWeight: "bold" },
   card: {
     backgroundColor: "#FFFFFF",
-    borderRadius: 20,
+    borderRadius: 16,
     padding: 18,
     borderLeftWidth: 4,
     borderLeftColor: "#26A69A",
@@ -272,12 +422,7 @@ const styles = StyleSheet.create({
   linkText: { color: "#00796B", marginTop: 12, fontWeight: "700" },
   loadingBox: { alignItems: "center", paddingVertical: 24, gap: 10 },
   loadingText: { color: "#607D8B" },
-  errorBox: {
-    backgroundColor: "#FFEBEE",
-    borderRadius: 16,
-    padding: 16,
-    gap: 12,
-  },
+  errorBox: { backgroundColor: "#FFEBEE", borderRadius: 16, padding: 16, gap: 12 },
   errorText: { color: "#C62828", lineHeight: 20 },
   retryButton: {
     backgroundColor: "#00796B",

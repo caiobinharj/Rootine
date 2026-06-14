@@ -27,7 +27,7 @@ const AnimatedEllipse = Animated.createAnimatedComponent(Ellipse);
 const AnimatedCircle = Animated.createAnimatedComponent(Circle);
 
 const COLORS = {
-  bg: "#F0F4F8",
+  bg: "transparent",
   trunk: "#5C4033",
   branch: "#6B4E31",
   leaf: "#4CAF50",
