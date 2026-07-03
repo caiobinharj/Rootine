@@ -1,0 +1,1 @@
+{"nodes": [{"id": "doc:README.md", "label": "README (Expo starter)", "type": "document", "file_type": "markdown", "source_file": "README.md", "summary": "Default create-expo-app README for the Rootine project: npm install, npx expo start, file-based routing in the app/ directory, reset-project script, and Expo community links."}], "edges": [], "hyperedges": []}
