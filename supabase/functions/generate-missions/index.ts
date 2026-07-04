@@ -11,6 +11,8 @@ import {
 const CONTEXT_VERSION = "MissionGenerationContextV1";
 const ALGORITHM_VERSION = "hybrid_ai_mission_composer_v2";
 const RECENT_DAYS = 14;
+const HARD_REPEAT_DAYS = 3;
+const HARD_REPEAT_MISSION_LIMIT = 12;
 const MAX_ACTIVE_MISSIONS = 4;
 const MAX_AI_BLUEPRINTS = 6;
 const MAX_AI_CANDIDATES = 3;
@@ -239,15 +241,45 @@ function missionTextSimilarity(left: string, right: string) {
   return overlap / Math.min(leftTokens.size, rightTokens.size);
 }
 
+function missionReferenceTimeMs(mission: any) {
+  const rawValue = mission?.completed_at ?? mission?.created_at;
+  const time = new Date(String(rawValue ?? "")).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function buildRepeatBlockMissions(activeMissions: any[], recentMissions: any[]) {
+  const hardSinceMs = Date.now() - HARD_REPEAT_DAYS * 24 * 60 * 60 * 1000;
+  const blocked: any[] = [];
+  const seen = new Set<string>();
+
+  const addMission = (mission: any) => {
+    const id = typeof mission?.id === "string" ? mission.id : null;
+    const key = id ?? `${mission?.pattern_key ?? ""}:${mission?.action_fingerprint ?? ""}:${mission?.created_at ?? ""}`;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    blocked.push(mission);
+  };
+
+  activeMissions.forEach(addMission);
+  recentMissions
+    .filter((mission) => String(mission?.status ?? "") !== "active")
+    .filter((mission) => missionReferenceTimeMs(mission) >= hardSinceMs)
+    .sort((left, right) => missionReferenceTimeMs(right) - missionReferenceTimeMs(left))
+    .slice(0, HARD_REPEAT_MISSION_LIMIT)
+    .forEach(addMission);
+
+  return blocked;
+}
+
 function rankPattern(input: {
   pattern: PatternRow;
   profile: Record<string, unknown>;
   facts: ProfileFact[];
-  recentMissions: any[];
+  repeatBlockMissions: any[];
   recentCategoryCounts: Record<string, number>;
   activeCategoryCounts: Record<string, number>;
-  recentPatternKeys: Set<string>;
-  recentActionFingerprints: Set<string>;
+  repeatBlockPatternKeys: Set<string>;
+  repeatBlockActionFingerprints: Set<string>;
   missionType: MissionType;
   maxDifficulty: number;
   maxCost: string;
@@ -257,11 +289,11 @@ function rankPattern(input: {
     pattern,
     profile,
     facts,
-    recentMissions,
+    repeatBlockMissions,
     recentCategoryCounts,
     activeCategoryCounts,
-    recentPatternKeys,
-    recentActionFingerprints,
+    repeatBlockPatternKeys,
+    repeatBlockActionFingerprints,
     missionType,
     maxDifficulty,
     maxCost,
@@ -272,10 +304,10 @@ function rankPattern(input: {
   if (pattern.difficulty_min > maxDifficulty) rejectedReasons.push("difficulty_above_profile");
   if (pattern.effort_minutes_min > timeBudget) rejectedReasons.push("effort_above_profile");
   if (costRank(pattern.cost_level) > costRank(maxCost)) rejectedReasons.push("cost_above_profile");
-  if (!pattern.recurrence_allowed && recentPatternKeys.has(pattern.key)) {
+  if (!pattern.recurrence_allowed && repeatBlockPatternKeys.has(pattern.key)) {
     rejectedReasons.push("pattern_repeated_recently");
   }
-  if (!pattern.recurrence_allowed && recentActionFingerprints.has(pattern.action_fingerprint)) {
+  if (!pattern.recurrence_allowed && repeatBlockActionFingerprints.has(pattern.action_fingerprint)) {
     rejectedReasons.push("action_fingerprint_repeated_recently");
   }
 
@@ -325,7 +357,7 @@ function rankPattern(input: {
   if (pattern.effort_minutes_max <= timeBudget) score += 2;
 
   const fallbackText = `${pattern.fallback_title_pt} ${pattern.fallback_description_pt}`;
-  const similarRecent = recentMissions.some((mission) =>
+  const similarRecent = repeatBlockMissions.some((mission) =>
     missionTextSimilarity(fallbackText, `${mission.title ?? ""} ${mission.description ?? ""}`) >= 0.72
   );
   if (similarRecent) rejectedReasons.push("mission_semantically_repeated_recently");
@@ -404,9 +436,9 @@ function validateCandidate(
   candidate: MissionCandidate,
   options: {
     facts: ProfileFact[];
-    recentMissions: any[];
-    recentPatternKeys: Set<string>;
-    recentActionFingerprints: Set<string>;
+    repeatBlockMissions: any[];
+    repeatBlockPatternKeys: Set<string>;
+    repeatBlockActionFingerprints: Set<string>;
     userLevel: number;
   },
 ) {
@@ -472,19 +504,19 @@ function validateCandidate(
     errors.push("mission_increases_consumption_without_justification");
   }
 
-  if (options.recentPatternKeys.has(candidate.pattern_key)) {
+  if (options.repeatBlockPatternKeys.has(candidate.pattern_key)) {
     errors.push("pattern_repeated_recently");
   }
   if (!candidate.action_fingerprint || candidate.action_fingerprint.trim().length < 3) {
     errors.push("action_fingerprint_required");
   }
-  if (options.recentActionFingerprints.has(candidate.action_fingerprint)) {
+  if (options.repeatBlockActionFingerprints.has(candidate.action_fingerprint)) {
     errors.push("action_fingerprint_repeated_recently");
   }
 
   const missionText = `${candidate.title} ${candidate.description}`;
   if (
-    options.recentMissions.some((mission) =>
+    options.repeatBlockMissions.some((mission) =>
       missionTextSimilarity(missionText, `${mission.title ?? ""} ${mission.description ?? ""}`) >= 0.72
     )
   ) {
@@ -917,7 +949,7 @@ serve(async (req: Request) => {
         .limit(500),
       supabaseAdmin
         .from("user_missions")
-        .select("id, title, description, status, category, pattern_key, action_fingerprint, created_at")
+        .select("id, title, description, status, category, pattern_key, action_fingerprint, created_at, completed_at")
         .eq("user_id", userId)
         .gte("created_at", recentSince)
         .order("created_at", { ascending: false })
@@ -975,6 +1007,17 @@ serve(async (req: Request) => {
       }
       return acc;
     }, {});
+    const repeatBlockMissions = buildRepeatBlockMissions(activeMissions ?? [], recentMissions ?? []);
+    const repeatBlockPatternKeys = new Set(
+      repeatBlockMissions
+        .map((mission: any) => mission.pattern_key)
+        .filter((key: unknown): key is string => typeof key === "string" && key.length > 0),
+    );
+    const repeatBlockActionFingerprints = new Set(
+      repeatBlockMissions
+        .map((mission: any) => mission.action_fingerprint)
+        .filter((key: unknown): key is string => typeof key === "string" && key.length > 0),
+    );
 
     const ranked = typedPatterns
       .map((pattern) =>
@@ -982,11 +1025,11 @@ serve(async (req: Request) => {
           pattern,
           profile,
           facts,
-          recentMissions: recentMissions ?? [],
+          repeatBlockMissions,
           recentCategoryCounts,
           activeCategoryCounts,
-          recentPatternKeys,
-          recentActionFingerprints,
+          repeatBlockPatternKeys,
+          repeatBlockActionFingerprints,
           missionType,
           maxDifficulty,
           maxCost,
@@ -1029,6 +1072,10 @@ serve(async (req: Request) => {
         recent_action_fingerprints: [...recentActionFingerprints],
         recent_categories: recentCategoryCounts,
         active_categories: activeCategoryCounts,
+        repeat_block_window_days: HARD_REPEAT_DAYS,
+        repeat_block_limit: HARD_REPEAT_MISSION_LIMIT,
+        repeat_block_pattern_keys: [...repeatBlockPatternKeys],
+        repeat_block_action_fingerprints: [...repeatBlockActionFingerprints],
       },
     };
 
@@ -1080,6 +1127,8 @@ serve(async (req: Request) => {
           recent_action_fingerprints: [...recentActionFingerprints],
           recent_categories: recentCategoryCounts,
           active_categories: activeCategoryCounts,
+          repeat_block_pattern_keys: [...repeatBlockPatternKeys],
+          repeat_block_action_fingerprints: [...repeatBlockActionFingerprints],
         },
       })
       : {
@@ -1109,9 +1158,9 @@ serve(async (req: Request) => {
       const blueprint = blueprintByPatternKey.get(attempt.candidate.pattern_key);
       const validation = validateCandidate(attempt.candidate, {
         facts,
-        recentMissions: recentMissions ?? [],
-        recentPatternKeys,
-        recentActionFingerprints,
+        repeatBlockMissions,
+        repeatBlockPatternKeys,
+        repeatBlockActionFingerprints,
         userLevel,
       });
 

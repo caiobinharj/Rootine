@@ -1,3 +1,7 @@
+import { AppHeader } from "@/components/AppHeader";
+import { RootineBackground } from "@/components/RootineBackground";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import { getLevelFromXp } from "@/lib/domain/xp";
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
@@ -8,12 +12,12 @@ import {
   ScrollView,
   StyleSheet,
   Text,
-  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
+import Svg, { Path } from "react-native-svg";
 
-type ProfileTab = "stats" | "achievements" | "history" | "facts" | "scientist";
+type ProfileTab = "stats" | "achievements" | "history" | "facts";
 
 type AchievementView = {
   key: string;
@@ -74,10 +78,10 @@ const FACT_ACTION_HELP = {
 };
 
 const IMPACT_METRICS = [
-  { key: "water_l", label: "Água", unit: "L", color: "#1976D2" },
-  { key: "co2_kg", label: "CO2", unit: "kg", color: "#455A64" },
-  { key: "waste_g", label: "Resíduos", unit: "g", color: "#6D4C41" },
-  { key: "energy_kwh", label: "Energia", unit: "kWh", color: "#F57F17" },
+  { key: "water_l", label: "Água", unit: "L", category: "water" },
+  { key: "co2_kg", label: "CO2", unit: "kg", category: "transport" },
+  { key: "waste_g", label: "Resíduos", unit: "g", category: "waste" },
+  { key: "energy_kwh", label: "Energia", unit: "kWh", category: "energy" },
 ] as const;
 
 function safeDate(value: unknown) {
@@ -236,15 +240,9 @@ function factSourceLabel(source: unknown) {
   return "Histórico do app";
 }
 
-function buildLocalScientistAnswer(message: string) {
-  return `Modo local do Cientista: ainda não consegui alcançar a Edge Function.
-
-Para "${message}", siga uma versão segura: escolha uma ação ambiental pequena, sem compra nova, teste por um dia e observe se tempo, acesso ou custo atrapalharam.
-
-Resposta educativa. Não substitui orientação médica, legal, financeira ou profissional especializada.`;
-}
-
 export default function ProfileScreen() {
+  const { theme } = useRootineTheme();
+  const styles = useProfileStyles();
   const [profileData, setProfileData] = useState<any>(null);
   const [missions, setMissions] = useState<any[]>([]);
   const [quizHistory, setQuizHistory] = useState<any[]>([]);
@@ -256,11 +254,6 @@ export default function ProfileScreen() {
   const [factEvents, setFactEvents] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<ProfileTab>("stats");
-  const [scientistInput, setScientistInput] = useState("");
-  const [scientistMessages, setScientistMessages] = useState<
-    { role: "user" | "assistant"; content: string }[]
-  >([]);
-  const [scientistLoading, setScientistLoading] = useState(false);
   const [factActionLoading, setFactActionLoading] = useState<string | null>(null);
   const [factHelpVisible, setFactHelpVisible] = useState(false);
   const { xp, fetchProfile } = useEcoStore();
@@ -501,75 +494,40 @@ export default function ProfileScreen() {
     }
   };
 
-  const sendScientistMessage = async () => {
-    const message = scientistInput.trim();
-    if (!message || scientistLoading) return;
-
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) return;
-
-    const nextMessages = [...scientistMessages, { role: "user" as const, content: message }];
-    setScientistMessages(nextMessages);
-    setScientistInput("");
-    setScientistLoading(true);
-
-    try {
-      const { data, error } = await supabase.functions.invoke("profile-scientist-chat", {
-        body: { userId: user.id, message },
-      });
-      if (error) throw error;
-
-      const protocols = Array.isArray(data?.protocols)
-        ? `\n\nProtocolos sugeridos:\n${data.protocols
-            .map((protocol: any) => `- ${protocol.title}: ${(protocol.steps || []).join(" ")}`)
-            .join("\n")}`
-        : "";
-
-      setScientistMessages([
-        ...nextMessages,
-        {
-          role: "assistant",
-          content: `${data?.answer || "Não consegui responder agora."}${protocols}`,
-        },
-      ]);
-    } catch (error: any) {
-      console.error("[PROFILE] Erro no cientista:", error);
-      const detail = error?.context?.status === 429
-        ? "Limite de perguntas atingido nesta hora."
-        : error instanceof Error
-          ? error.message
-          : String(error);
-      setScientistMessages([
-        ...nextMessages,
-        {
-          role: "assistant",
-          content: `${buildLocalScientistAnswer(message)}\n\nDetalhe técnico: ${detail}`,
-        },
-      ]);
-    } finally {
-      setScientistLoading(false);
-    }
-  };
-
-  if (loading) return <ActivityIndicator style={{ flex: 1 }} color="#4CAF50" />;
+  if (loading) {
+    return (
+      <View style={styles.loadingScreen}>
+        <RootineBackground variant="journal" />
+        <ActivityIndicator color={theme.colors.primary} />
+      </View>
+    );
+  }
 
   return (
-    <ScrollView style={styles.container} contentContainerStyle={styles.content}>
-      <View style={styles.avatarCircle}>
-        <Text style={styles.avatarText}>🌱</Text>
-      </View>
+    <View style={styles.container}>
+      <RootineBackground variant="journal" />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+        <AppHeader
+          eyebrow="Perfil"
+          title="Diário do guardião"
+          subtitle="Dados, impacto e fatos aprendidos em uma visão auditável."
+          compact
+        />
 
-      <Text style={styles.userName}>
-        {profileData?.nome || profileData?.name || "Protetor do Habitat"}
-      </Text>
-      <Text style={styles.userXp}>
-        Nível {levelInfo.level} · {levelInfo.milestone}
-      </Text>
-      <Text style={styles.userProgress}>
-        {xp || 0} XP · {Math.round(levelInfo.progress * 100)}% até o próximo marco
-      </Text>
+        <View style={styles.identityRow}>
+          <BotanicalEmblem />
+          <View style={styles.identityCopy}>
+            <Text style={styles.userName}>
+              {profileData?.nome || profileData?.name || "Protetor do Habitat"}
+            </Text>
+            <Text style={styles.userXp}>
+              Nível {levelInfo.level} · {levelInfo.milestone}
+            </Text>
+            <Text style={styles.userProgress}>
+              {xp || 0} XP · {Math.round(levelInfo.progress * 100)}% até o próximo marco
+            </Text>
+          </View>
+        </View>
 
       <View style={styles.tabs}>
         {[
@@ -577,7 +535,6 @@ export default function ProfileScreen() {
           ["achievements", "Conquistas"],
           ["history", "Histórico"],
           ["facts", "Fatos"],
-          ["scientist", "Cientista"],
         ].map(([id, label]) => (
           <TouchableOpacity
             key={id}
@@ -724,55 +681,13 @@ export default function ProfileScreen() {
         </View>
       )}
 
-      {activeTab === "scientist" && (
-        <View style={styles.section}>
-          <Text style={styles.sectionTitle}>Agente Cientista</Text>
-          <Text style={styles.scientistIntro}>
-            O Cientista lê apenas resumos e fatos permitidos. Ele não altera seu perfil diretamente.
-          </Text>
-          <View style={styles.chatBox}>
-            {scientistMessages.length === 0 ? (
-              <Text style={styles.emptyText}>
-                Exemplo: Como posso reduzir desperdício de água com pouco tempo?
-              </Text>
-            ) : (
-              scientistMessages.map((message, index) => (
-                <View
-                  key={`${message.role}-${index}`}
-                  style={[
-                    styles.messageBubble,
-                    message.role === "user" ? styles.userBubble : styles.assistantBubble,
-                  ]}
-                >
-                  <Text style={styles.messageText}>{message.content}</Text>
-                </View>
-              ))
-            )}
-          </View>
-          <TextInput
-            value={scientistInput}
-            onChangeText={setScientistInput}
-            placeholder="Converse com o cientista..."
-            placeholderTextColor="#9E9E9E"
-            style={styles.input}
-            multiline
-          />
-          <TouchableOpacity
-            style={[styles.sendButton, scientistLoading && styles.sendButtonDisabled]}
-            onPress={sendScientistMessage}
-            disabled={scientistLoading}
-          >
-            <Text style={styles.sendText}>
-              {scientistLoading ? "Analisando..." : "Enviar"}
-            </Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </ScrollView>
+      </ScrollView>
+    </View>
   );
 }
 
 function StatCard({ label, value }: { label: string; value: string }) {
+  const styles = useProfileStyles();
   return (
     <View style={styles.statCard}>
       <Text style={styles.statValue}>{value}</Text>
@@ -782,13 +697,23 @@ function StatCard({ label, value }: { label: string; value: string }) {
 }
 
 function ImpactBlock({ title, totals }: { title: string; totals: ImpactTotals }) {
+  const { theme } = useRootineTheme();
+  const styles = useProfileStyles();
   return (
     <View style={styles.impactBlock}>
       <Text style={styles.impactTitle}>{title}</Text>
       <View style={styles.impactGrid}>
         {IMPACT_METRICS.map((metric) => (
           <View key={metric.key} style={styles.impactMetricCard}>
-            <View style={[styles.impactAccent, { backgroundColor: metric.color }]} />
+            <View
+              style={[
+                styles.impactAccent,
+                {
+                  backgroundColor:
+                    theme.categories[metric.category as keyof typeof theme.categories],
+                },
+              ]}
+            />
             <Text style={styles.impactMetricLabel}>{metric.label}</Text>
             <Text style={styles.impactMetricValue}>
               {totals[metric.key]} <Text style={styles.impactMetricUnit}>{metric.unit}</Text>
@@ -814,6 +739,7 @@ function Achievement({
   xp: number;
   unlockedAt: string | null;
 }) {
+  const styles = useProfileStyles();
   const dateText = unlockedAt ? ` • ${formatDate(unlockedAt)}` : "";
 
   return (
@@ -827,163 +753,217 @@ function Achievement({
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F0F4F8" },
-  content: { alignItems: "center", paddingTop: 80, paddingHorizontal: 20, paddingBottom: 40 },
-  avatarCircle: {
-    width: 100,
-    height: 100,
-    borderRadius: 50,
-    backgroundColor: "#FFF",
-    justifyContent: "center",
-    alignItems: "center",
-    elevation: 4,
-  },
-  avatarText: { fontSize: 50 },
-  userName: { fontSize: 22, fontWeight: "bold", marginTop: 15, color: "#263238" },
-  userXp: { fontSize: 14, color: "#2E7D32", fontWeight: "bold", marginTop: 4 },
-  userProgress: { color: "#607D8B", marginTop: 3, fontWeight: "600" },
-  tabs: {
-    width: "100%",
-    flexDirection: "row",
-    flexWrap: "wrap",
-    gap: 8,
-    marginTop: 24,
-  },
-  tabButton: {
-    flexGrow: 1,
-    backgroundColor: "#FFF",
-    paddingVertical: 10,
-    paddingHorizontal: 12,
-    borderRadius: 999,
-    alignItems: "center",
-  },
-  tabButtonActive: { backgroundColor: "#2E7D32" },
-  tabText: { color: "#607D8B", fontWeight: "700", fontSize: 12 },
-  tabTextActive: { color: "#FFF" },
-  section: {
-    width: "100%",
-    marginTop: 30,
-    backgroundColor: "#FFF",
-    borderRadius: 15,
-    padding: 20,
-  },
-  sectionHeaderRow: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-    marginBottom: 12,
-  },
-  sectionTitle: { fontSize: 16, fontWeight: "bold", color: "#1B5E20", marginBottom: 15 },
-  sectionHeaderRowTitle: { marginBottom: 0 },
-  infoButton: {
-    width: 28,
-    height: 28,
-    borderRadius: 14,
-    backgroundColor: "#E8F5E9",
-    alignItems: "center",
-    justifyContent: "center",
-    borderWidth: 1,
-    borderColor: "#C8E6C9",
-  },
-  infoButtonText: { color: "#1B5E20", fontWeight: "bold", fontSize: 14 },
-  sectionSubtitle: { color: "#1B5E20", fontWeight: "bold", marginTop: 18, marginBottom: 8 },
-  statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  statCard: { width: "47%", backgroundColor: "#F1F8E9", borderRadius: 12, padding: 14 },
-  statValue: { fontSize: 20, fontWeight: "bold", color: "#1B5E20" },
-  statLabel: { color: "#607D8B", marginTop: 4, fontWeight: "600", fontSize: 12 },
-  formulaText: { color: "#78909C", marginTop: 8, marginBottom: 8, fontSize: 12, lineHeight: 18 },
-  impactBlock: { borderTopWidth: 1, borderTopColor: "#ECEFF1", paddingTop: 9, marginTop: 9 },
-  impactTitle: { color: "#263238", fontWeight: "bold", marginBottom: 10 },
-  impactGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  impactMetricCard: {
-    width: "47%",
-    backgroundColor: "#FAFAFA",
-    borderWidth: 1,
-    borderColor: "#ECEFF1",
-    borderRadius: 12,
-    padding: 12,
-    minHeight: 96,
-    overflow: "hidden",
-  },
-  impactAccent: {
-    width: 28,
-    height: 4,
-    borderRadius: 999,
-    marginBottom: 9,
-  },
-  impactMetricLabel: { color: "#455A64", fontWeight: "800", fontSize: 12 },
-  impactMetricValue: { color: "#263238", fontWeight: "bold", fontSize: 19, marginTop: 5 },
-  impactMetricUnit: { color: "#607D8B", fontSize: 12, fontWeight: "700" },
-  impactMetricHint: { color: "#90A4AE", fontSize: 11, marginTop: 3, fontWeight: "600" },
-  achievement: {
-    borderWidth: 1,
-    borderColor: "#ECEFF1",
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-  },
-  achievementUnlocked: { borderColor: "#A5D6A7", backgroundColor: "#F1F8E9" },
-  achievementTitle: { fontWeight: "bold", color: "#263238", fontSize: 15 },
-  achievementDescription: { color: "#607D8B", marginTop: 4 },
-  achievementStatus: { color: "#2E7D32", marginTop: 8, fontWeight: "bold" },
-  historyItem: { borderBottomWidth: 1, borderBottomColor: "#ECEFF1", paddingVertical: 10 },
-  historyTitle: { color: "#263238", fontWeight: "700" },
-  historyMeta: { color: "#78909C", marginTop: 3, fontSize: 12 },
-  factCard: {
-    borderWidth: 1,
-    borderColor: "#ECEFF1",
-    borderRadius: 14,
-    padding: 14,
-    marginBottom: 10,
-  },
-  helpBox: {
-    backgroundColor: "#F1F8E9",
-    borderWidth: 1,
-    borderColor: "#C8E6C9",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 12,
-  },
-  helpTitle: { color: "#1B5E20", fontWeight: "bold", marginBottom: 6 },
-  helpText: { color: "#455A64", fontSize: 12, lineHeight: 18, marginTop: 4 },
-  factChipRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
-  factChip: {
-    backgroundColor: "#E8F5E9",
-    borderRadius: 999,
-    paddingHorizontal: 9,
-    paddingVertical: 5,
-  },
-  factChipText: { color: "#1B5E20", fontSize: 11, fontWeight: "800" },
-  factConfidence: { color: "#607D8B", fontSize: 11, fontWeight: "700" },
-  factTitle: { color: "#263238", fontWeight: "bold", marginTop: 10, lineHeight: 20 },
-  factMeta: { color: "#607D8B", marginTop: 6, lineHeight: 18, fontSize: 12 },
-  factActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
-  factButton: { backgroundColor: "#ECEFF1", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
-  factButtonText: { color: "#455A64", fontWeight: "700", fontSize: 11 },
-  emptyText: { color: "#78909C", lineHeight: 20 },
-  scientistIntro: { color: "#607D8B", lineHeight: 20, marginBottom: 12 },
-  chatBox: { backgroundColor: "#F5F5F5", borderRadius: 14, padding: 12, minHeight: 110, marginBottom: 12 },
-  messageBubble: { padding: 10, borderRadius: 12, marginBottom: 8 },
-  userBubble: { backgroundColor: "#E3F2FD", alignSelf: "flex-end" },
-  assistantBubble: { backgroundColor: "#E8F5E9", alignSelf: "flex-start" },
-  messageText: { color: "#263238", lineHeight: 20 },
-  input: {
-    backgroundColor: "#F5F5F5",
-    borderRadius: 12,
-    padding: 12,
-    minHeight: 70,
-    textAlignVertical: "top",
-    color: "#263238",
-  },
-  sendButton: {
-    backgroundColor: "#2E7D32",
-    borderRadius: 12,
-    paddingVertical: 13,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  sendButtonDisabled: { backgroundColor: "#A5D6A7" },
-  sendText: { color: "#FFF", fontWeight: "bold" },
-});
+function BotanicalEmblem() {
+  const { theme } = useRootineTheme();
+  const styles = useProfileStyles();
+
+  return (
+    <View style={styles.avatarCircle}>
+      <Svg width="62" height="62" viewBox="0 0 80 80">
+        <Path
+          d="M39 68 C38 55 39 43 42 31 C45 20 53 13 66 10 C66 28 55 39 44 43"
+          fill="none"
+          stroke={theme.colors.primaryStrong}
+          strokeLinecap="round"
+          strokeWidth="5"
+        />
+        <Path
+          d="M39 68 C39 54 36 42 29 31 C23 21 14 16 4 15 C5 31 17 43 35 45"
+          fill="none"
+          stroke={theme.colors.accent}
+          strokeLinecap="round"
+          strokeWidth="5"
+        />
+        <Path
+          d="M43 28 C52 17 61 13 73 14 C69 27 58 35 45 37 Z"
+          fill={theme.colors.primarySoft}
+          stroke={theme.colors.primary}
+          strokeWidth="2"
+        />
+        <Path
+          d="M31 31 C21 20 12 18 3 20 C8 33 19 40 34 39 Z"
+          fill={theme.colors.accentSoft}
+          stroke={theme.colors.accent}
+          strokeWidth="2"
+        />
+      </Svg>
+    </View>
+  );
+}
+
+function useProfileStyles() {
+  const { theme } = useRootineTheme();
+  return useMemo(() => createStyles(theme), [theme]);
+}
+
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    scroll: { flex: 1 },
+    loadingScreen: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.colors.background,
+    },
+    content: { paddingBottom: 40 },
+    identityRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 14,
+      marginHorizontal: 20,
+      marginTop: 14,
+      backgroundColor: theme.colors.transparentSurface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 14,
+    },
+    identityCopy: {
+      flex: 1,
+    },
+    avatarCircle: {
+      width: 78,
+      height: 78,
+      borderRadius: 39,
+      backgroundColor: theme.colors.surfaceRaised,
+      justifyContent: "center",
+      alignItems: "center",
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      shadowColor: theme.colors.shadow,
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 5 },
+    },
+    userName: { fontSize: 22, fontWeight: "800", color: theme.colors.text, lineHeight: 27 },
+    userXp: { fontSize: 14, color: theme.colors.primaryStrong, fontWeight: "800", marginTop: 4 },
+    userProgress: { color: theme.colors.textMuted, marginTop: 3, fontWeight: "700", lineHeight: 19 },
+    tabs: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+      marginTop: 18,
+      paddingHorizontal: 20,
+    },
+    tabButton: {
+      flexGrow: 1,
+      backgroundColor: theme.colors.surface,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 999,
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    tabButtonActive: { backgroundColor: theme.colors.primary },
+    tabText: { color: theme.colors.textMuted, fontWeight: "700", fontSize: 12 },
+    tabTextActive: { color: theme.colors.textOnPrimary },
+    section: {
+      marginHorizontal: 20,
+      marginTop: 20,
+      backgroundColor: theme.colors.surfaceRaised,
+      borderRadius: 8,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    sectionHeaderRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      marginBottom: 12,
+    },
+    sectionTitle: { fontSize: 16, fontWeight: "800", color: theme.colors.primaryStrong, marginBottom: 15 },
+    sectionHeaderRowTitle: { marginBottom: 0 },
+    infoButton: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: theme.colors.primarySoft,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    infoButtonText: { color: theme.colors.primaryStrong, fontWeight: "800", fontSize: 14 },
+    sectionSubtitle: { color: theme.colors.primaryStrong, fontWeight: "800", marginTop: 18, marginBottom: 8 },
+    statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    statCard: { width: "47%", backgroundColor: theme.colors.surface, borderRadius: 8, padding: 14, borderWidth: 1, borderColor: theme.colors.border },
+    statValue: { fontSize: 20, fontWeight: "800", color: theme.colors.primaryStrong },
+    statLabel: { color: theme.colors.textMuted, marginTop: 4, fontWeight: "700", fontSize: 12 },
+    formulaText: { color: theme.colors.textSubtle, marginTop: 8, marginBottom: 8, fontSize: 12, lineHeight: 18 },
+    impactBlock: { borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 9, marginTop: 9 },
+    impactTitle: { color: theme.colors.text, fontWeight: "800", marginBottom: 10 },
+    impactGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    impactMetricCard: {
+      width: "47%",
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 12,
+      minHeight: 96,
+      overflow: "hidden",
+    },
+    impactAccent: {
+      width: 28,
+      height: 4,
+      borderRadius: 999,
+      marginBottom: 9,
+    },
+    impactMetricLabel: { color: theme.colors.textMuted, fontWeight: "800", fontSize: 12 },
+    impactMetricValue: { color: theme.colors.text, fontWeight: "800", fontSize: 19, marginTop: 5 },
+    impactMetricUnit: { color: theme.colors.textMuted, fontSize: 12, fontWeight: "700" },
+    impactMetricHint: { color: theme.colors.textSubtle, fontSize: 11, marginTop: 3, fontWeight: "700" },
+    achievement: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 14,
+      marginBottom: 10,
+      backgroundColor: theme.colors.surface,
+    },
+    achievementUnlocked: { borderColor: theme.colors.success, backgroundColor: theme.colors.successSoft },
+    achievementTitle: { fontWeight: "800", color: theme.colors.text, fontSize: 15 },
+    achievementDescription: { color: theme.colors.textMuted, marginTop: 4 },
+    achievementStatus: { color: theme.colors.success, marginTop: 8, fontWeight: "800" },
+    historyItem: { borderBottomWidth: 1, borderBottomColor: theme.colors.border, paddingVertical: 10 },
+    historyTitle: { color: theme.colors.text, fontWeight: "700" },
+    historyMeta: { color: theme.colors.textSubtle, marginTop: 3, fontSize: 12 },
+    factCard: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 14,
+      marginBottom: 10,
+      backgroundColor: theme.colors.surface,
+    },
+    helpBox: {
+      backgroundColor: theme.colors.primarySoft,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 12,
+    },
+    helpTitle: { color: theme.colors.primaryStrong, fontWeight: "800", marginBottom: 6 },
+    helpText: { color: theme.colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: 4 },
+    factChipRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
+    factChip: {
+      backgroundColor: theme.colors.primarySoft,
+      borderRadius: 999,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+    },
+    factChipText: { color: theme.colors.primaryStrong, fontSize: 11, fontWeight: "800" },
+    factConfidence: { color: theme.colors.textMuted, fontSize: 11, fontWeight: "700" },
+    factTitle: { color: theme.colors.text, fontWeight: "800", marginTop: 10, lineHeight: 20 },
+    factMeta: { color: theme.colors.textMuted, marginTop: 6, lineHeight: 18, fontSize: 12 },
+    factActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+    factButton: { backgroundColor: theme.colors.surfaceMuted, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
+    factButtonText: { color: theme.colors.textMuted, fontWeight: "700", fontSize: 11 },
+    emptyText: { color: theme.colors.textSubtle, lineHeight: 20 },
+  });

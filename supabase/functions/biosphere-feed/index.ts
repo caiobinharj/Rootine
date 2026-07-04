@@ -41,6 +41,11 @@ function decodeXml(value: string) {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, '"')
     .replace(/&#39;/g, "'")
+    .replace(/&nbsp&;nbsp;/gi, " ")
+    .replace(/&;nbsp;?/gi, " ")
+    .replace(/&nbsp;?/gi, " ")
+    .replace(/&#160;|&#xA0;/gi, " ")
+    .replace(/\u00a0/g, " ")
     .replace(/<[^>]+>/g, " ")
     .replace(/\s+/g, " ")
     .trim();

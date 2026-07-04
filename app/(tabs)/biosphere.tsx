@@ -1,3 +1,7 @@
+import { AppHeader } from "@/components/AppHeader";
+import { RootineBackground } from "@/components/RootineBackground";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import { supabase, supabaseUrl } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
 import React, { useCallback, useEffect, useMemo, useState } from "react";
@@ -34,6 +38,29 @@ interface BiospherePost {
   created_at: string;
 }
 
+function cleanFeedText(value: unknown) {
+  return String(value ?? "")
+    .replace(/&amp;/g, "&")
+    .replace(/&nbsp&;nbsp;/gi, " ")
+    .replace(/&;nbsp;?/gi, " ")
+    .replace(/&nbsp;?/gi, " ")
+    .replace(/&#160;|&#xA0;/gi, " ")
+    .replace(/\u00a0/g, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeFeedItem(item: any): FeedItem {
+  return {
+    title: cleanFeedText(item?.title),
+    summary: cleanFeedText(item?.summary) || "Sem descrição disponível.",
+    source: cleanFeedText(item?.source) || "Google Notícias",
+    url: String(item?.url ?? ""),
+    publishedAt: String(item?.publishedAt ?? new Date().toISOString()),
+  };
+}
+
 function formatPublishedAt(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "Recente";
@@ -53,6 +80,8 @@ function postTypeLabel(type: BiospherePost["post_type"]) {
 }
 
 export default function BiosphereScreen() {
+  const { theme } = useRootineTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [activeTab, setActiveTab] = useState<BiosphereTab>("community");
   const [news, setNews] = useState<FeedItem[]>([]);
   const [events, setEvents] = useState<FeedItem[]>([]);
@@ -89,8 +118,8 @@ export default function BiosphereScreen() {
         throw new Error(data?.message || data?.error || `Feed indisponível (${response.status}).`);
       }
 
-      setNews(Array.isArray(data?.news) ? data.news : []);
-      setEvents(Array.isArray(data?.events) ? data.events : []);
+      setNews(Array.isArray(data?.news) ? data.news.map(normalizeFeedItem) : []);
+      setEvents(Array.isArray(data?.events) ? data.events.map(normalizeFeedItem) : []);
       setFetchedAt(data?.fetchedAt ?? new Date().toISOString());
     } catch (error) {
       console.error("[BIOSPHERE] Erro ao carregar RSS:", error);
@@ -202,7 +231,7 @@ export default function BiosphereScreen() {
     if (loadingFeed && items.length === 0) {
       return (
         <View style={styles.loadingBox}>
-          <ActivityIndicator color="#00796B" />
+          <ActivityIndicator color={theme.colors.primary} />
           <Text style={styles.loadingText}>Buscando conteúdo de Niterói e RJ...</Text>
         </View>
       );
@@ -239,197 +268,216 @@ export default function BiosphereScreen() {
   const communityCount = useMemo(() => posts.length, [posts]);
 
   return (
-    <ScrollView
-      style={styles.container}
-      contentContainerStyle={styles.content}
-      refreshControl={
-        <RefreshControl
-          refreshing={activeTab === "community" ? loadingCommunity : loadingFeed}
-          onRefresh={activeTab === "community" ? loadCommunity : loadFeed}
-          tintColor="#00796B"
+    <View style={styles.container}>
+      <RootineBackground variant="community" />
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        refreshControl={
+          <RefreshControl
+            refreshing={activeTab === "community" ? loadingCommunity : loadingFeed}
+            onRefresh={activeTab === "community" ? loadCommunity : loadFeed}
+            tintColor={theme.colors.primary}
+          />
+        }
+      >
+        <AppHeader
+          eyebrow="Biosfera"
+          title="Mural do território"
+          subtitle="Marcos, convites e notícias ambientais sem competição."
+          compact
         />
-      }
-    >
-      <Text style={styles.eyebrow}>Biosfera</Text>
-      <Text style={styles.title}>Comunidade, território e mundo vivo</Text>
-      <Text style={styles.subtitle}>
-        Compartilhe marcos sem competição e acompanhe notícias e eventos ambientais do território.
-      </Text>
-      {fetchedAt ? (
-        <Text style={styles.updatedAt}>RSS atualizado em {formatPublishedAt(fetchedAt)}</Text>
-      ) : null}
+        {fetchedAt ? (
+          <Text style={styles.updatedAt}>RSS atualizado em {formatPublishedAt(fetchedAt)}</Text>
+        ) : null}
 
-      <View style={styles.tabs}>
-        {[
-          ["community", `Comunidade (${communityCount})`],
-          ["events", "Eventos"],
-          ["news", "Notícias"],
-        ].map(([id, label]) => (
-          <TouchableOpacity
-            key={id}
-            style={[styles.tabButton, activeTab === id && styles.tabButtonActive]}
-            onPress={() => setActiveTab(id as BiosphereTab)}
-          >
-            <Text style={[styles.tabText, activeTab === id && styles.tabTextActive]}>
-              {label}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
-      {activeTab === "community" && (
-        <View style={styles.section}>
-          <View style={styles.composer}>
-            <Text style={styles.sectionHint}>Compartilhe um marco, aprendizado ou convite simples.</Text>
-            <TextInput
-              value={postTitle}
-              onChangeText={setPostTitle}
-              placeholder="Título"
-              placeholderTextColor="#9E9E9E"
-              style={styles.input}
-            />
-            <TextInput
-              value={postBody}
-              onChangeText={setPostBody}
-              placeholder="Mensagem para a comunidade"
-              placeholderTextColor="#9E9E9E"
-              multiline
-              style={[styles.input, styles.bodyInput]}
-            />
-            <View style={styles.actionRow}>
-              <TouchableOpacity
-                style={[styles.publishButton, posting && styles.disabledButton]}
-                onPress={() => publishPost("community")}
-                disabled={posting}
-              >
-                <Text style={styles.publishText}>{posting ? "Publicando..." : "Publicar"}</Text>
-              </TouchableOpacity>
-              <TouchableOpacity
-                style={[styles.impactButton, posting && styles.disabledButton]}
-                onPress={() => publishPost("impact_milestone")}
-                disabled={posting}
-              >
-                <Text style={styles.impactButtonText}>Compartilhar impacto</Text>
-              </TouchableOpacity>
-            </View>
-          </View>
-
-          {communityError ? <Text style={styles.errorText}>{communityError}</Text> : null}
-          {loadingCommunity && posts.length === 0 ? <ActivityIndicator color="#00796B" /> : null}
-          {posts.map((post) => (
-            <View key={post.id} style={styles.card}>
-              <Text style={styles.meta}>
-                {postTypeLabel(post.post_type)} • {post.author_name} • {formatPublishedAt(post.created_at)}
+        <View style={styles.tabs}>
+          {[
+            ["community", `Comunidade (${communityCount})`],
+            ["events", "Eventos"],
+            ["news", "Notícias"],
+          ].map(([id, label]) => (
+            <TouchableOpacity
+              key={id}
+              style={[styles.tabButton, activeTab === id && styles.tabButtonActive]}
+              onPress={() => setActiveTab(id as BiosphereTab)}
+            >
+              <Text style={[styles.tabText, activeTab === id && styles.tabTextActive]}>
+                {label}
               </Text>
-              <Text style={styles.cardTitle}>{post.title}</Text>
-              <Text style={styles.cardBody}>{post.body}</Text>
-              {post.category ? <Text style={styles.footerText}>{post.category}</Text> : null}
-            </View>
+            </TouchableOpacity>
           ))}
-          {!loadingCommunity && posts.length === 0 ? (
-            <Text style={styles.emptyText}>Ainda não há compartilhamentos comunitários.</Text>
-          ) : null}
         </View>
-      )}
 
-      {activeTab === "events" && (
-        <View style={styles.section}>
-          <Text style={styles.sectionHint}>Eventos encontrados via Google Notícias (Niterói / RJ).</Text>
-          {renderFeedCards(events, "Nenhum evento recente encontrado para a região.")}
-        </View>
-      )}
+        {activeTab === "community" && (
+          <View style={styles.section}>
+            <View style={styles.composer}>
+              <Text style={styles.sectionHint}>Compartilhe um marco, aprendizado ou convite simples.</Text>
+              <TextInput
+                value={postTitle}
+                onChangeText={setPostTitle}
+                placeholder="Título"
+                placeholderTextColor={theme.colors.textSubtle}
+                style={styles.input}
+              />
+              <TextInput
+                value={postBody}
+                onChangeText={setPostBody}
+                placeholder="Mensagem para a comunidade"
+                placeholderTextColor={theme.colors.textSubtle}
+                multiline
+                style={[styles.input, styles.bodyInput]}
+              />
+              <View style={styles.actionRow}>
+                <TouchableOpacity
+                  style={[styles.publishButton, posting && styles.disabledButton]}
+                  onPress={() => publishPost("community")}
+                  disabled={posting}
+                >
+                  <Text style={styles.publishText}>{posting ? "Publicando..." : "Publicar"}</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.impactButton, posting && styles.disabledButton]}
+                  onPress={() => publishPost("impact_milestone")}
+                  disabled={posting}
+                >
+                  <Text style={styles.impactButtonText}>Compartilhar impacto</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
 
-      {activeTab === "news" && (
-        <View style={styles.section}>
-          <Text style={styles.sectionHint}>Notícias ambientais de Niterói e Rio de Janeiro.</Text>
-          {renderFeedCards(news, "Nenhuma notícia recente encontrada para a região.")}
-        </View>
-      )}
-    </ScrollView>
+            {communityError ? <Text style={styles.errorText}>{communityError}</Text> : null}
+            {loadingCommunity && posts.length === 0 ? <ActivityIndicator color={theme.colors.primary} /> : null}
+            {posts.map((post) => (
+              <View key={post.id} style={styles.card}>
+                <Text style={styles.meta}>
+                  {postTypeLabel(post.post_type)} • {post.author_name} • {formatPublishedAt(post.created_at)}
+                </Text>
+                <Text style={styles.cardTitle}>{post.title}</Text>
+                <Text style={styles.cardBody}>{post.body}</Text>
+                {post.category ? <Text style={styles.footerText}>{post.category}</Text> : null}
+              </View>
+            ))}
+            {!loadingCommunity && posts.length === 0 ? (
+              <Text style={styles.emptyText}>Ainda não há compartilhamentos comunitários.</Text>
+            ) : null}
+          </View>
+        )}
+
+        {activeTab === "events" && (
+          <View style={styles.section}>
+            <Text style={styles.sectionHint}>Eventos encontrados via Google Notícias (Niterói / RJ).</Text>
+            {renderFeedCards(events, "Nenhum evento recente encontrado para a região.")}
+          </View>
+        )}
+
+        {activeTab === "news" && (
+          <View style={styles.section}>
+            <Text style={styles.sectionHint}>Notícias ambientais de Niterói e Rio de Janeiro.</Text>
+            {renderFeedCards(news, "Nenhuma notícia recente encontrada para a região.")}
+          </View>
+        )}
+      </ScrollView>
+    </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F0F4F8" },
-  content: { paddingTop: 60, paddingHorizontal: 20, paddingBottom: 40 },
-  eyebrow: {
-    color: "#00796B",
-    fontSize: 12,
-    fontWeight: "bold",
-    letterSpacing: 1,
-    textTransform: "uppercase",
-  },
-  title: { color: "#1B5E20", fontSize: 28, fontWeight: "bold", marginTop: 6 },
-  subtitle: { color: "#607D8B", lineHeight: 20, marginTop: 8 },
-  updatedAt: { color: "#78909C", fontSize: 12, marginTop: 8 },
-  tabs: { flexDirection: "row", gap: 8, marginTop: 22 },
-  tabButton: {
-    flex: 1,
-    backgroundColor: "#FFFFFF",
-    borderRadius: 999,
-    paddingVertical: 11,
-    alignItems: "center",
-  },
-  tabButtonActive: { backgroundColor: "#00796B" },
-  tabText: { color: "#607D8B", fontWeight: "bold", fontSize: 12 },
-  tabTextActive: { color: "#FFFFFF" },
-  section: { marginTop: 18, gap: 12 },
-  sectionHint: { color: "#78909C", fontSize: 12, marginBottom: 4, lineHeight: 18 },
-  composer: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 14,
-    borderLeftWidth: 4,
-    borderLeftColor: "#00796B",
-    gap: 10,
-  },
-  input: {
-    backgroundColor: "#F5F5F5",
-    borderRadius: 12,
-    padding: 12,
-    color: "#263238",
-  },
-  bodyInput: { minHeight: 86, textAlignVertical: "top" },
-  actionRow: { flexDirection: "row", gap: 10 },
-  publishButton: {
-    flex: 1,
-    backgroundColor: "#00796B",
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  impactButton: {
-    flex: 1,
-    backgroundColor: "#E0F2F1",
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  disabledButton: { opacity: 0.6 },
-  publishText: { color: "#FFF", fontWeight: "bold" },
-  impactButtonText: { color: "#00695C", fontWeight: "bold" },
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 16,
-    padding: 18,
-    borderLeftWidth: 4,
-    borderLeftColor: "#26A69A",
-  },
-  meta: { color: "#00796B", fontSize: 12, fontWeight: "bold", marginBottom: 8 },
-  cardTitle: { color: "#263238", fontSize: 17, fontWeight: "bold", lineHeight: 22 },
-  cardBody: { color: "#607D8B", lineHeight: 21, marginTop: 8 },
-  footerText: { color: "#8D6E63", marginTop: 12, fontWeight: "700" },
-  linkText: { color: "#00796B", marginTop: 12, fontWeight: "700" },
-  loadingBox: { alignItems: "center", paddingVertical: 24, gap: 10 },
-  loadingText: { color: "#607D8B" },
-  errorBox: { backgroundColor: "#FFEBEE", borderRadius: 16, padding: 16, gap: 12 },
-  errorText: { color: "#C62828", lineHeight: 20 },
-  retryButton: {
-    backgroundColor: "#00796B",
-    borderRadius: 12,
-    paddingVertical: 12,
-    alignItems: "center",
-  },
-  retryButtonText: { color: "#FFF", fontWeight: "bold" },
-  emptyText: { color: "#78909C", textAlign: "center", paddingVertical: 20 },
-});
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    scroll: { flex: 1, backgroundColor: theme.colors.background },
+    content: { paddingBottom: 40 },
+    updatedAt: {
+      color: theme.colors.textSubtle,
+      fontSize: 12,
+      marginTop: 10,
+      marginHorizontal: 20,
+      fontWeight: "700",
+    },
+    tabs: { flexDirection: "row", gap: 8, marginTop: 20, paddingHorizontal: 20 },
+    tabButton: {
+      flex: 1,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 999,
+      paddingVertical: 11,
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    tabButtonActive: { backgroundColor: theme.colors.primary },
+    tabText: { color: theme.colors.textMuted, fontWeight: "800", fontSize: 12 },
+    tabTextActive: { color: theme.colors.textOnPrimary },
+    section: { marginTop: 18, gap: 12, paddingHorizontal: 20 },
+    sectionHint: { color: theme.colors.textSubtle, fontSize: 12, marginBottom: 4, lineHeight: 18 },
+    composer: {
+      backgroundColor: theme.colors.surfaceRaised,
+      borderRadius: 8,
+      padding: 14,
+      borderLeftWidth: 4,
+      borderLeftColor: theme.colors.primary,
+      gap: 10,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    input: {
+      backgroundColor: theme.colors.input,
+      borderRadius: 8,
+      padding: 12,
+      color: theme.colors.text,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    bodyInput: { minHeight: 86, textAlignVertical: "top" },
+    actionRow: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    publishButton: {
+      backgroundColor: theme.colors.primary,
+      borderRadius: 999,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      alignItems: "center",
+    },
+    impactButton: {
+      backgroundColor: theme.colors.primarySoft,
+      borderRadius: 999,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    disabledButton: { opacity: 0.6 },
+    publishText: { color: theme.colors.textOnPrimary, fontWeight: "800" },
+    impactButtonText: { color: theme.colors.primaryStrong, fontWeight: "800" },
+    card: {
+      backgroundColor: theme.colors.surfaceRaised,
+      borderRadius: 8,
+      padding: 18,
+      borderLeftWidth: 4,
+      borderLeftColor: theme.colors.info,
+      borderTopWidth: 1,
+      borderRightWidth: 1,
+      borderBottomWidth: 1,
+      borderTopColor: theme.colors.border,
+      borderRightColor: theme.colors.border,
+      borderBottomColor: theme.colors.border,
+    },
+    meta: { color: theme.colors.primaryStrong, fontSize: 12, fontWeight: "800", marginBottom: 8 },
+    cardTitle: { color: theme.colors.text, fontSize: 17, fontWeight: "800", lineHeight: 22 },
+    cardBody: { color: theme.colors.textMuted, lineHeight: 21, marginTop: 8 },
+    footerText: { color: theme.colors.accent, marginTop: 12, fontWeight: "700" },
+    linkText: { color: theme.colors.primaryStrong, marginTop: 12, fontWeight: "800" },
+    loadingBox: { alignItems: "center", paddingVertical: 24, gap: 10 },
+    loadingText: { color: theme.colors.textMuted },
+    errorBox: { backgroundColor: theme.colors.dangerSoft, borderRadius: 8, padding: 16, gap: 12 },
+    errorText: { color: theme.colors.danger, lineHeight: 20 },
+    retryButton: {
+      alignSelf: "flex-start",
+      backgroundColor: theme.colors.primary,
+      borderRadius: 999,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      alignItems: "center",
+    },
+    retryButtonText: { color: theme.colors.textOnPrimary, fontWeight: "800" },
+    emptyText: { color: theme.colors.textSubtle, textAlign: "center", paddingVertical: 20 },
+  });

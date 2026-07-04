@@ -1,4 +1,8 @@
+import { AppHeader } from "@/components/AppHeader";
 import MissionCard from "@/components/MissionCard";
+import { RootineBackground } from "@/components/RootineBackground";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
 import { useFocusEffect } from "expo-router";
@@ -25,6 +29,8 @@ export default function AdventureScreen() {
     clearLastError,
     clearLastNotice,
   } = useEcoStore();
+  const { theme } = useRootineTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [userId, setUserId] = useState<string | null>(null);
 
   const loadMissions = useCallback(async () => {
@@ -79,7 +85,8 @@ export default function AdventureScreen() {
   if (loading && missions.length === 0) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#4CAF50" />
+        <RootineBackground variant="trail" />
+        <ActivityIndicator size="large" color={theme.colors.primary} />
         <Text style={styles.loadingText}>
           A Trilha está compondo sua próxima missão...
         </Text>
@@ -89,10 +96,13 @@ export default function AdventureScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Trilha</Text>
-      <Text style={styles.subtitle}>
-        Missões diárias e semanais ajustadas ao seu perfil e aos seus fatos aprendidos.
-      </Text>
+      <RootineBackground variant="trail" />
+      <AppHeader
+        eyebrow="Trilha"
+        title="Missões em terreno real"
+        subtitle="Diárias e semanais ajustadas ao seu perfil, sem forçar rotinas que não cabem no seu dia."
+        compact
+      />
 
       <View style={styles.actions}>
         <TouchableOpacity
@@ -111,7 +121,9 @@ export default function AdventureScreen() {
           onPress={() => handleGenerate("specialized")}
           disabled={loading}
         >
-          <Text style={styles.actionText}>{loading ? "Gerando..." : "Gerar semanal"}</Text>
+          <Text style={styles.specializedActionText}>
+            {loading ? "Gerando..." : "Gerar semanal"}
+          </Text>
         </TouchableOpacity>
       </View>
 
@@ -119,11 +131,15 @@ export default function AdventureScreen() {
         data={missions}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={
-          <View>
-            <Text style={styles.sectionTitle}>Diárias: {dailyMissions.length}</Text>
-            <Text style={styles.sectionTitle}>
-              Semanais: {specializedMissions.length}
-            </Text>
+          <View style={styles.sectionSummary}>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryValue}>{dailyMissions.length}</Text>
+              <Text style={styles.summaryLabel}>diárias</Text>
+            </View>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryValue}>{specializedMissions.length}</Text>
+              <Text style={styles.summaryLabel}>semanais</Text>
+            </View>
           </View>
         }
         renderItem={({ item }) => (
@@ -141,17 +157,19 @@ export default function AdventureScreen() {
         )}
         ListEmptyComponent={
           <View style={styles.emptyContainer}>
+            <Text style={styles.emptyTitle}>A trilha está quieta por enquanto</Text>
             <Text style={styles.emptyText}>
-              Nenhuma missão ativa. Peça uma nova missão para continuar sua Trilha.
+              Peça uma missão nova quando quiser continuar.
             </Text>
           </View>
         }
         contentContainerStyle={styles.listPadding}
+        showsVerticalScrollIndicator={false}
       />
 
       {lastProgressEvent ? (
         <View style={styles.progressToast}>
-          <View style={styles.progressToastHeader}>
+          <View style={styles.toastHeader}>
             <Text style={styles.progressTitle}>Progresso registrado</Text>
             <TouchableOpacity onPress={clearProgressEvent} hitSlop={8}>
               <Text style={styles.progressDismiss}>OK</Text>
@@ -171,7 +189,7 @@ export default function AdventureScreen() {
 
       {lastError ? (
         <View style={styles.errorToast}>
-          <View style={styles.errorToastHeader}>
+          <View style={styles.toastHeader}>
             <Text style={styles.errorTitle}>Missão não gerada</Text>
             <TouchableOpacity onPress={clearLastError} hitSlop={8}>
               <Text style={styles.errorDismiss}>OK</Text>
@@ -183,7 +201,7 @@ export default function AdventureScreen() {
 
       {lastNotice ? (
         <View style={styles.noticeToast}>
-          <View style={styles.errorToastHeader}>
+          <View style={styles.toastHeader}>
             <Text style={styles.noticeTitle}>Limite de missões</Text>
             <TouchableOpacity onPress={clearLastNotice} hitSlop={8}>
               <Text style={styles.noticeDismiss}>OK</Text>
@@ -196,122 +214,173 @@ export default function AdventureScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F0F4F8",
-    paddingHorizontal: 20,
-    paddingTop: 60,
-  },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 10, color: "#666" },
-  title: {
-    fontSize: 30,
-    fontWeight: "bold",
-    color: "#1B5E20",
-  },
-  subtitle: {
-    color: "#607D8B",
-    lineHeight: 20,
-    marginTop: 6,
-    marginBottom: 18,
-  },
-  actions: { flexDirection: "row", gap: 10, marginBottom: 16 },
-  actionButton: {
-    flex: 1,
-    backgroundColor: "#2E7D32",
-    paddingVertical: 13,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  actionButtonDisabled: { opacity: 0.68 },
-  specializedButton: { backgroundColor: "#7B1FA2" },
-  actionText: { color: "#FFF", fontWeight: "bold" },
-  sectionTitle: {
-    color: "#607D8B",
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  emptyContainer: { marginTop: 80, alignItems: "center" },
-  emptyText: { color: "#78909C", textAlign: "center", lineHeight: 22 },
-  listPadding: { paddingBottom: 40 },
-  errorToast: {
-    position: "absolute",
-    right: 16,
-    top: 54,
-    zIndex: 35,
-    minWidth: 260,
-    maxWidth: 380,
-    backgroundColor: "#FFEBEE",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: "#C62828",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  errorToastHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  errorTitle: { color: "#B71C1C", fontWeight: "bold", marginBottom: 4 },
-  errorText: { color: "#C62828", lineHeight: 20 },
-  errorDismiss: { color: "#B71C1C", fontWeight: "bold" },
-  noticeToast: {
-    position: "absolute",
-    right: 16,
-    top: 54,
-    zIndex: 34,
-    minWidth: 260,
-    maxWidth: 380,
-    backgroundColor: "#E3F2FD",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: "#1976D2",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  noticeTitle: { color: "#0D47A1", fontWeight: "bold", marginBottom: 4 },
-  noticeText: { color: "#1565C0", lineHeight: 20 },
-  noticeDismiss: { color: "#0D47A1", fontWeight: "bold" },
-  progressToast: {
-    position: "absolute",
-    right: 16,
-    bottom: 22,
-    zIndex: 30,
-    minWidth: 240,
-    maxWidth: 360,
-    backgroundColor: "#E8F5E9",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: "#2E7D32",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  progressToastHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  progressTitle: { color: "#1B5E20", fontWeight: "bold" },
-  progressText: { color: "#2E7D32", fontWeight: "700", lineHeight: 20 },
-  progressPendingText: { color: "#607D8B", fontSize: 12, marginTop: 2 },
-  progressDismiss: { color: "#1B5E20", fontWeight: "bold" },
-});
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    centered: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: theme.colors.background,
+      paddingHorizontal: 28,
+    },
+    loadingText: {
+      marginTop: 12,
+      color: theme.colors.textMuted,
+      fontWeight: "700",
+      textAlign: "center",
+    },
+    actions: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 10,
+      paddingHorizontal: 20,
+      paddingTop: 14,
+      paddingBottom: 6,
+    },
+    actionButton: {
+      backgroundColor: theme.colors.primary,
+      paddingVertical: 12,
+      paddingHorizontal: 16,
+      borderRadius: 999,
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    actionButtonDisabled: { opacity: 0.68 },
+    specializedButton: {
+      backgroundColor: theme.colors.accentSoft,
+    },
+    actionText: {
+      color: theme.colors.textOnPrimary,
+      fontWeight: "800",
+    },
+    specializedActionText: {
+      color: theme.colors.accentStrong,
+      fontWeight: "800",
+    },
+    sectionSummary: {
+      flexDirection: "row",
+      gap: 10,
+      paddingTop: 8,
+      paddingBottom: 6,
+    },
+    summaryItem: {
+      minWidth: 108,
+      backgroundColor: theme.colors.transparentSurface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 12,
+      paddingVertical: 10,
+    },
+    summaryValue: {
+      color: theme.colors.primaryStrong,
+      fontSize: 22,
+      fontWeight: "800",
+    },
+    summaryLabel: {
+      color: theme.colors.textMuted,
+      fontWeight: "700",
+      marginTop: 2,
+    },
+    emptyContainer: {
+      marginTop: 70,
+      alignItems: "flex-start",
+      backgroundColor: theme.colors.transparentSurface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 18,
+    },
+    emptyTitle: {
+      color: theme.colors.text,
+      fontWeight: "800",
+      fontSize: 17,
+    },
+    emptyText: {
+      color: theme.colors.textMuted,
+      lineHeight: 22,
+      marginTop: 6,
+    },
+    listPadding: {
+      paddingHorizontal: 20,
+      paddingBottom: 40,
+    },
+    errorToast: {
+      position: "absolute",
+      right: 16,
+      top: 54,
+      zIndex: 35,
+      minWidth: 260,
+      maxWidth: 380,
+      backgroundColor: theme.colors.dangerSoft,
+      borderRadius: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderLeftWidth: 4,
+      borderLeftColor: theme.colors.danger,
+      shadowColor: theme.colors.shadow,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.16,
+      shadowRadius: 12,
+      elevation: 8,
+    },
+    toastHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    errorTitle: { color: theme.colors.danger, fontWeight: "800", marginBottom: 4 },
+    errorText: { color: theme.colors.danger, lineHeight: 20 },
+    errorDismiss: { color: theme.colors.danger, fontWeight: "800" },
+    noticeToast: {
+      position: "absolute",
+      right: 16,
+      top: 54,
+      zIndex: 34,
+      minWidth: 260,
+      maxWidth: 380,
+      backgroundColor: theme.colors.infoSoft,
+      borderRadius: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderLeftWidth: 4,
+      borderLeftColor: theme.colors.info,
+      shadowColor: theme.colors.shadow,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.16,
+      shadowRadius: 12,
+      elevation: 8,
+    },
+    noticeTitle: { color: theme.colors.info, fontWeight: "800", marginBottom: 4 },
+    noticeText: { color: theme.colors.info, lineHeight: 20 },
+    noticeDismiss: { color: theme.colors.info, fontWeight: "800" },
+    progressToast: {
+      position: "absolute",
+      right: 16,
+      bottom: 22,
+      zIndex: 30,
+      minWidth: 240,
+      maxWidth: 360,
+      backgroundColor: theme.colors.successSoft,
+      borderRadius: 8,
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      borderLeftWidth: 4,
+      borderLeftColor: theme.colors.success,
+      shadowColor: theme.colors.shadow,
+      shadowOffset: { width: 0, height: 6 },
+      shadowOpacity: 0.16,
+      shadowRadius: 12,
+      elevation: 8,
+    },
+    progressTitle: { color: theme.colors.success, fontWeight: "800" },
+    progressText: { color: theme.colors.success, fontWeight: "700", lineHeight: 20 },
+    progressPendingText: { color: theme.colors.textMuted, fontSize: 12, marginTop: 2 },
+    progressDismiss: { color: theme.colors.success, fontWeight: "800" },
+  });

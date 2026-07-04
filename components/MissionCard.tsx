@@ -1,4 +1,6 @@
 import { useEcoStore } from "@/store/useEcoStore";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import dayjs from "dayjs";
 import "dayjs/locale/pt-br";
 import relativeTime from "dayjs/plugin/relativeTime";
@@ -28,6 +30,11 @@ export default function MissionCard({
   xp,
   expiresAt,
 }: MissionCardProps) {
+  const { theme } = useRootineTheme();
+  const categoryColor =
+    theme.categories[String(category ?? "") as keyof typeof theme.categories] ??
+    theme.categories.default;
+  const styles = createStyles(theme, categoryColor);
   const { completeMission, failMission, refuseMission } = useEcoStore();
   const [editModalVisible, setEditModalVisible] = useState(false);
 
@@ -44,12 +51,12 @@ export default function MissionCard({
             <Text style={styles.categoryTag}>
               {category?.toUpperCase() || "GERAL"}
             </Text>
-            <Text style={styles.deadlineTag}>⌛ {timeLeft}</Text>
+            <Text style={styles.deadlineTag}>{timeLeft}</Text>
           </View>
           
           <View style={styles.rightHeader}>
             <TouchableOpacity onPress={() => setEditModalVisible(true)} style={styles.editButton}>
-              <Text style={styles.editText}>✏️ Editar</Text>
+              <Text style={styles.editText}>Editar</Text>
             </TouchableOpacity>
             <Text style={styles.xpText}>+{xp} XP missão</Text>
           </View>
@@ -96,17 +103,20 @@ export default function MissionCard({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: RootineTheme, categoryColor: string) =>
+  StyleSheet.create({
   card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
+    backgroundColor: theme.colors.surfaceRaised,
+    borderRadius: 8,
     padding: 20,
     marginVertical: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
+    shadowColor: theme.colors.shadow,
+    shadowOffset: { width: 0, height: 8 },
+    shadowOpacity: 0.12,
+    shadowRadius: 16,
+    elevation: 4,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
   },
   header: {
     flexDirection: "row",
@@ -120,67 +130,69 @@ const styles = StyleSheet.create({
     gap: 8,
   },
   editButton: {
-    backgroundColor: "#F3E5F5",
+    backgroundColor: theme.colors.accentSoft,
     paddingHorizontal: 8,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 999,
   },
   editText: {
-    color: "#9C27B0",
+    color: theme.colors.accentStrong,
     fontSize: 10,
-    fontWeight: "bold",
+    fontWeight: "800",
   },
   badgeRow: { flexDirection: "row", gap: 8 },
   categoryTag: {
-    backgroundColor: "#E8F5E9",
-    color: "#2E7D32",
+    backgroundColor: theme.colors.primarySoft,
+    color: categoryColor,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 999,
     fontSize: 10,
-    fontWeight: "bold",
+    fontWeight: "800",
+    overflow: "hidden",
   },
   deadlineTag: {
-    backgroundColor: "#FFF3E0",
-    color: "#E65100",
+    backgroundColor: theme.colors.warningSoft,
+    color: theme.colors.accentStrong,
     paddingHorizontal: 10,
     paddingVertical: 4,
-    borderRadius: 6,
+    borderRadius: 999,
     fontSize: 10,
-    fontWeight: "bold",
+    fontWeight: "800",
+    overflow: "hidden",
   },
-  xpText: { color: "#1976D2", fontWeight: "bold", fontSize: 14 },
+  xpText: { color: theme.colors.info, fontWeight: "800", fontSize: 14 },
   cardTitle: {
     fontSize: 20,
-    fontWeight: "bold",
-    color: "#1B5E20",
+    fontWeight: "800",
+    color: theme.colors.primaryStrong,
     marginBottom: 6,
   },
   description: {
     fontSize: 14,
-    color: "#546E7A",
+    color: theme.colors.textMuted,
     marginBottom: 16,
     lineHeight: 20,
   },
   aiBox: {
-    backgroundColor: "#F3E5F5",
+    backgroundColor: theme.colors.surface,
     borderLeftWidth: 4,
-    borderLeftColor: "#9C27B0",
+    borderLeftColor: theme.colors.accent,
     padding: 12,
     borderRadius: 8,
     marginBottom: 20,
   },
   aiLabel: {
     fontSize: 9,
-    fontWeight: "bold",
-    color: "#7B1FA2",
+    fontWeight: "800",
+    color: theme.colors.accent,
     marginBottom: 4,
-    letterSpacing: 1,
+    letterSpacing: 0,
   },
   aiContent: {
     fontSize: 13,
     fontStyle: "italic",
-    color: "#4A148C",
+    color: theme.colors.text,
     lineHeight: 18,
   },
   actions: { flexDirection: "row", gap: 8 },
@@ -193,18 +205,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  completeButton: { backgroundColor: "#4CAF50" },
+  completeButton: { backgroundColor: theme.colors.primary },
   failButton: {
-    backgroundColor: "#FFF8E1",
+    backgroundColor: theme.colors.warningSoft,
     borderWidth: 1,
-    borderColor: "#F9A825",
+    borderColor: theme.colors.warning,
   },
   refuseButton: {
     backgroundColor: "transparent",
     borderWidth: 1,
-    borderColor: "#FF5252",
+    borderColor: theme.colors.danger,
   },
-  buttonText: { color: "#FFF", fontWeight: "bold", fontSize: 14 },
-  failText: { color: "#F57F17", fontWeight: "bold", fontSize: 13, textAlign: "center" },
-  refuseText: { color: "#FF5252", fontWeight: "bold", fontSize: 14 },
+  buttonText: { color: theme.colors.textOnPrimary, fontWeight: "800", fontSize: 14 },
+  failText: { color: theme.colors.warning, fontWeight: "800", fontSize: 13, textAlign: "center" },
+  refuseText: { color: theme.colors.danger, fontWeight: "800", fontSize: 14 },
 });

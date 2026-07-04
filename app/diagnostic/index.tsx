@@ -1,15 +1,20 @@
 import { DiagnosticCard } from "@/components/DiagnosticCard";
 import { ProgressBar } from "@/components/ProgressBar";
+import { RootineBackground } from "@/components/RootineBackground";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import {
   ONBOARDING_QUESTIONS,
   type OnboardingAnswers,
 } from "@/lib/domain/onboarding";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "expo-router";
-import React, { useState } from "react";
-import { ActivityIndicator, Alert, StyleSheet, Text, View } from "react-native";
+import React, { useMemo, useState } from "react";
+import { ActivityIndicator, Alert, ScrollView, StyleSheet, Text, View } from "react-native";
 
 export default function DiagnosticScreen() {
+  const { theme } = useRootineTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [currentStep, setCurrentStep] = useState(0);
   const [answers, setAnswers] = useState<OnboardingAnswers>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -76,7 +81,8 @@ export default function DiagnosticScreen() {
   if (isSubmitting) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#4CAF50" />
+        <RootineBackground variant="journal" />
+        <ActivityIndicator size="large" color={theme.colors.primary} />
         <Text style={styles.loadingText}>Preparando seu habitat...</Text>
       </View>
     );
@@ -84,9 +90,13 @@ export default function DiagnosticScreen() {
 
   return (
     <View style={styles.container}>
+      <RootineBackground variant="journal" />
       <ProgressBar progress={(currentStep + 1) / ONBOARDING_QUESTIONS.length} />
 
-      <View style={styles.content}>
+      <ScrollView
+        contentContainerStyle={styles.content}
+        showsVerticalScrollIndicator={false}
+      >
         <DiagnosticCard
           question={ONBOARDING_QUESTIONS[currentStep]}
           onAnswer={handleAnswer}
@@ -94,36 +104,39 @@ export default function DiagnosticScreen() {
         <Text style={styles.counter}>
           {currentStep + 1} de {ONBOARDING_QUESTIONS.length}
         </Text>
-      </View>
+      </ScrollView>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F0F4F8", paddingTop: 60 },
-  content: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 40,
-  },
-  counter: {
-    marginTop: 24,
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#999",
-    letterSpacing: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#F0F4F8",
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: "#333",
-    fontWeight: "500",
-  },
-});
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background, paddingTop: 60 },
+    content: {
+      flexGrow: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingHorizontal: 20,
+      paddingTop: 32,
+      paddingBottom: 40,
+    },
+    counter: {
+      marginTop: 24,
+      fontSize: 12,
+      fontWeight: "800",
+      color: theme.colors.textSubtle,
+      letterSpacing: 0,
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: theme.colors.background,
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 16,
+      color: theme.colors.text,
+      fontWeight: "700",
+    },
+  });

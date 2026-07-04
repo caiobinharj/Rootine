@@ -1,6 +1,5 @@
 import React from "react";
 import {
-  Dimensions,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -8,7 +7,8 @@ import {
 } from "react-native";
 import Animated, { FadeInRight, FadeOutLeft } from "react-native-reanimated";
 
-const { width } = Dimensions.get("window");
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 
 interface DiagnosticCardProps {
   question: {
@@ -20,6 +20,9 @@ interface DiagnosticCardProps {
 }
 
 export const DiagnosticCard = ({ question, onAnswer }: DiagnosticCardProps) => {
+  const { theme } = useRootineTheme();
+  const styles = createStyles(theme);
+
   return (
     <Animated.View
       entering={FadeInRight}
@@ -44,39 +47,52 @@ export const DiagnosticCard = ({ question, onAnswer }: DiagnosticCardProps) => {
   );
 };
 
-const styles = StyleSheet.create({
-  card: {
-    width: width * 0.9,
-    backgroundColor: "#FFF",
-    borderRadius: 24,
-    padding: 32,
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-  },
-  typeLabel: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#4CAF50",
-    marginBottom: 8,
-    letterSpacing: 1.5,
-  },
-  questionText: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 24,
-    lineHeight: 28,
-  },
-  optionsContainer: { gap: 12 },
-  optionButton: {
-    padding: 18,
-    borderRadius: 16,
-    backgroundColor: "#F8F9FA",
-    borderWidth: 1,
-    borderColor: "#E9ECEF",
-    alignItems: "center",
-  },
-  optionText: { fontSize: 14, fontWeight: "600", color: "#495057" },
-});
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    card: {
+      width: "100%",
+      maxWidth: 440,
+      backgroundColor: theme.colors.surfaceRaised,
+      borderRadius: 8,
+      paddingHorizontal: 24,
+      paddingVertical: 28,
+      elevation: 4,
+      shadowColor: theme.colors.shadow,
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    typeLabel: {
+      fontSize: 12,
+      fontWeight: "800",
+      color: theme.colors.accent,
+      marginBottom: 8,
+      letterSpacing: 0,
+    },
+    questionText: {
+      fontSize: 22,
+      fontWeight: "800",
+      color: theme.colors.text,
+      marginBottom: 24,
+      lineHeight: 28,
+      flexShrink: 1,
+    },
+    optionsContainer: { gap: 12 },
+    optionButton: {
+      paddingHorizontal: 14,
+      paddingVertical: 16,
+      borderRadius: 8,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      alignItems: "center",
+    },
+    optionText: {
+      fontSize: 14,
+      fontWeight: "700",
+      color: theme.colors.text,
+      lineHeight: 20,
+      textAlign: "center",
+    },
+  });

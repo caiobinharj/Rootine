@@ -1,6 +1,9 @@
+import { RootineBackground } from "@/components/RootineBackground";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import { supabase } from "@/lib/supabase";
 import { useFlashcardStore } from "@/store/useFlashcardStore";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -11,6 +14,8 @@ import {
 } from "react-native";
 
 export default function AdminTab() {
+  const { theme } = useRootineTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [loading, setLoading] = useState(false);
   const fetchActiveBatch = useFlashcardStore((s) => s.fetchActiveBatch);
 
@@ -87,21 +92,22 @@ export default function AdminTab() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>🛠️ Admin de Desenvolvimento</Text>
+      <RootineBackground variant="journal" />
+      <Text style={styles.title}>Admin de Desenvolvimento</Text>
       <Text style={styles.subtitle}>
         Ferramentas fáceis de apagar antes do deploy final.
       </Text>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#FF5722" style={{ marginTop: 20 }} />
+        <ActivityIndicator size="large" color={theme.colors.accent} style={{ marginTop: 20 }} />
       ) : (
         <View style={styles.buttonContainer}>
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#FF9800" }]} onPress={handleResetBatch}>
-            <Text style={styles.buttonText}>🔄 Reiniciar Lote Atual</Text>
+          <TouchableOpacity style={styles.button} onPress={handleResetBatch}>
+            <Text style={styles.buttonText}>Reiniciar Lote Atual</Text>
           </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#F44336" }]} onPress={handleClearContext}>
-            <Text style={styles.buttonText}>🗑️ Apagar Contexto (Cérebro)</Text>
+          <TouchableOpacity style={[styles.button, styles.dangerButton]} onPress={handleClearContext}>
+            <Text style={styles.buttonText}>Apagar Contexto (Cérebro)</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -109,37 +115,42 @@ export default function AdminTab() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 24,
-    backgroundColor: "#F0F4F8",
-    justifyContent: "center",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 40,
-  },
-  buttonContainer: {
-    gap: 16,
-  },
-  button: {
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  buttonText: {
-    color: "#FFF",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-});
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      padding: 24,
+      backgroundColor: theme.colors.background,
+      justifyContent: "center",
+    },
+    title: {
+      fontSize: 24,
+      fontWeight: "800",
+      color: theme.colors.text,
+      textAlign: "center",
+      marginBottom: 8,
+    },
+    subtitle: {
+      fontSize: 14,
+      color: theme.colors.textMuted,
+      textAlign: "center",
+      marginBottom: 40,
+    },
+    buttonContainer: {
+      gap: 16,
+    },
+    button: {
+      padding: 16,
+      borderRadius: 999,
+      alignItems: "center",
+      backgroundColor: theme.colors.warning,
+    },
+    dangerButton: {
+      backgroundColor: theme.colors.danger,
+    },
+    buttonText: {
+      color: theme.colors.textOnPrimary,
+      fontSize: 16,
+      fontWeight: "800",
+    },
+  });

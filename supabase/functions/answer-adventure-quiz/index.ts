@@ -65,6 +65,11 @@ serve(async (req: Request) => {
     if (!quiz) throw new Error("Quiz não encontrado.");
     if (!quizQuestion) throw new Error("quiz_question não encontrada.");
 
+    const correctOption = typeof quiz.correct_option === "string" && ["A", "B", "C", "D"].includes(quiz.correct_option)
+      ? quiz.correct_option
+      : quizQuestion.correct_option;
+    const explanation = quiz.explanation || quizQuestion.explanation;
+
     const { data: existingAnswer } = await supabaseAdmin
       .from("user_quiz_answers")
       .select("id, correct")
@@ -77,12 +82,12 @@ serve(async (req: Request) => {
         success: true,
         reused: true,
         correct: Boolean(existingAnswer.correct),
-        explanation: quizQuestion.explanation,
+        explanation,
         xp: { xpGranted: 0, capped: false, alreadyAwarded: true },
       });
     }
 
-    const correct = selectedOption === quizQuestion.correct_option;
+    const correct = selectedOption === correctOption;
     const { data: answerRow, error: insertError } = await supabaseAdmin
       .from("user_quiz_answers")
       .insert({
@@ -114,6 +119,7 @@ serve(async (req: Request) => {
           quiz_id: quizId,
           quiz_question_id: quizQuestionId,
           selected_option: selectedOption,
+          correct_option: correctOption,
           correct,
           category: quizQuestion.category,
           difficulty: quizQuestion.difficulty,
@@ -169,8 +175,8 @@ serve(async (req: Request) => {
     return jsonResponse({
       success: true,
       correct,
-      explanation: quizQuestion.explanation,
-      correct_option: quizQuestion.correct_option,
+      explanation,
+      correct_option: correctOption,
       xp,
       achievements,
     });

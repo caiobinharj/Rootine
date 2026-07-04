@@ -1,6 +1,8 @@
+import { RootineBackground } from "@/components/RootineBackground";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import { supabase } from "@/lib/supabase";
-import { useRouter } from "expo-router";
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
@@ -61,12 +63,13 @@ function getAuthErrorMessage(error: unknown, isSignUp: boolean) {
 }
 
 export default function AuthScreen() {
+  const { theme } = useRootineTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [isSignUp, setIsSignUp] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
 
   async function handleAuth() {
     // 1. Validação inicial para evitar chamadas desnecessárias à API
@@ -152,9 +155,10 @@ export default function AuthScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
+      <RootineBackground variant="journal" />
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <Text style={styles.logo}>🌱 Rootine</Text>
+          <Text style={styles.logo}>Rootine</Text>
           <Text style={styles.subtitle}>
             {isSignUp
               ? "Junte-se à jornada sustentável"
@@ -171,7 +175,7 @@ export default function AuthScreen() {
             <TextInput
               placeholder="Nome Completo"
               style={styles.input}
-              placeholderTextColor="#999"
+              placeholderTextColor={theme.colors.textSubtle}
               onChangeText={setFullName}
               autoCorrect={false}
             />
@@ -180,7 +184,7 @@ export default function AuthScreen() {
           <TextInput
             placeholder="E-mail"
             style={styles.input}
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.colors.textSubtle}
             autoCapitalize="none"
             keyboardType="email-address"
             onChangeText={setEmail}
@@ -190,7 +194,7 @@ export default function AuthScreen() {
           <TextInput
             placeholder="Senha"
             style={styles.input}
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.colors.textSubtle}
             secureTextEntry
             onChangeText={setPassword}
           />
@@ -201,7 +205,7 @@ export default function AuthScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#FFF" />
+              <ActivityIndicator color={theme.colors.textOnPrimary} />
             ) : (
               <Text style={styles.buttonText}>
                 {isSignUp ? "Cadastrar" : "Entrar"}
@@ -225,40 +229,43 @@ export default function AuthScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F0F4F8" },
-  scrollContent: { flexGrow: 1, justifyContent: "center", padding: 25 },
-  header: { alignItems: "center", marginBottom: 40 },
-  logo: { fontSize: 32, fontWeight: "bold", color: "#1B5E20" },
-  subtitle: { fontSize: 14, color: "#666", marginTop: 5 },
-  form: {
-    backgroundColor: "#FFF",
-    padding: 25,
-    borderRadius: 20,
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-  },
-  label: { fontSize: 20, fontWeight: "bold", color: "#333", marginBottom: 20 },
-  input: {
-    backgroundColor: "#F9F9F9",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    color: "#333",
-  },
-  button: {
-    backgroundColor: "#4CAF50",
-    padding: 18,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  buttonDisabled: { backgroundColor: "#A5D6A7" },
-  buttonText: { color: "#FFF", fontWeight: "bold", fontSize: 16 },
-  switchButton: { marginTop: 25, alignItems: "center" },
-  switchText: { color: "#4CAF50", fontWeight: "600", fontSize: 14 },
-});
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    scrollContent: { flexGrow: 1, justifyContent: "center", padding: 25 },
+    header: { alignItems: "center", marginBottom: 40 },
+    logo: { fontSize: 34, fontWeight: "800", color: theme.colors.primaryStrong },
+    subtitle: { fontSize: 14, color: theme.colors.textMuted, marginTop: 5 },
+    form: {
+      backgroundColor: theme.colors.surfaceRaised,
+      padding: 25,
+      borderRadius: 8,
+      elevation: 4,
+      shadowColor: theme.colors.shadow,
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    label: { fontSize: 20, fontWeight: "800", color: theme.colors.text, marginBottom: 20 },
+    input: {
+      backgroundColor: theme.colors.input,
+      padding: 15,
+      borderRadius: 8,
+      marginBottom: 15,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      color: theme.colors.text,
+    },
+    button: {
+      backgroundColor: theme.colors.primary,
+      padding: 16,
+      borderRadius: 999,
+      alignItems: "center",
+      marginTop: 10,
+    },
+    buttonDisabled: { backgroundColor: theme.colors.surfacePressed },
+    buttonText: { color: theme.colors.textOnPrimary, fontWeight: "800", fontSize: 16 },
+    switchButton: { marginTop: 25, alignItems: "center" },
+    switchText: { color: theme.colors.primaryStrong, fontWeight: "700", fontSize: 14 },
+  });

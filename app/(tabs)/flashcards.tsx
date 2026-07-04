@@ -1,10 +1,14 @@
+import { AppHeader } from "@/components/AppHeader";
 import { BatchCountdown } from "@/components/BatchCountdown";
 import { ProgressBar } from "@/components/ProgressBar";
+import { RootineBackground } from "@/components/RootineBackground";
 import { SwipeFlashcard } from "@/components/SwipeFlashcard";
 import { BATCH_SIZE } from "@/constants/flashcards";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import { supabase } from "@/lib/supabase";
 import { useFlashcardStore } from "@/store/useFlashcardStore";
-import React, { useCallback, useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ActivityIndicator,
   ScrollView,
@@ -40,6 +44,8 @@ interface TrailQuiz {
 }
 
 export default function FlashcardsTab() {
+  const { theme } = useRootineTheme();
+  const styles = useMemo(() => createStyles(theme), [theme]);
   const [userId, setUserId] = useState<string | null>(null);
   const [screenState, setScreenState] = useState<ScreenState>("loading");
   const [quiz, setQuiz] = useState<TrailQuiz | null>(null);
@@ -231,7 +237,7 @@ export default function FlashcardsTab() {
       });
       if (error) throw error;
       if (data?.error || !data?.quiz?.quiz_question_id) {
-        throw new Error(String(data?.error ?? "Quiz sem origem determinística."));
+        throw new Error(String(data?.error ?? "Quiz sem origem rastreável."));
       }
       setQuiz(data.quiz);
       setSelectedOption(null);
@@ -240,7 +246,7 @@ export default function FlashcardsTab() {
       const detail = error instanceof Error ? error.message : String(error);
       setSelectedOption(null);
       setQuizResult(
-        `Não foi possível carregar um quiz determinístico agora. Detalhe: ${detail}`,
+        `Não foi possível carregar um quiz balanceado agora. Detalhe: ${detail}`,
       );
     } finally {
       setQuizLoading(false);
@@ -354,7 +360,7 @@ export default function FlashcardsTab() {
             </TouchableOpacity>
           ))}
           {quizSaving && !quizResult ? (
-            <ActivityIndicator color="#7B1FA2" style={{ marginTop: 8 }} />
+            <ActivityIndicator color={theme.colors.accent} style={{ marginTop: 8 }} />
           ) : null}
           {quizResult && <Text style={styles.quizResult}>{quizResult}</Text>}
           {quizResult && (
@@ -392,7 +398,14 @@ export default function FlashcardsTab() {
     children?: React.ReactNode;
   }) => (
     <GestureHandlerRootView style={styles.container}>
+      <RootineBackground variant="adventure" />
       <ScrollView contentContainerStyle={styles.stateContent}>
+        <AppHeader
+          eyebrow="Aventura"
+          title="Mesa de cartas"
+          subtitle="Um lote curto para calibrar missões sem transformar a rotina em cobrança."
+          compact
+        />
         <View style={styles.heroPanel}>
           <Text style={styles.panelEyebrow}>{eyebrow}</Text>
           <Text style={styles.messageTitle}>{title}</Text>
@@ -431,8 +444,9 @@ export default function FlashcardsTab() {
   if (screenState === "loading") {
     return (
       <GestureHandlerRootView style={styles.container}>
+        <RootineBackground variant="adventure" />
         <View style={styles.loadingPanel}>
-          <ActivityIndicator size="large" color="#2E7D32" />
+          <ActivityIndicator size="large" color={theme.colors.primary} />
           <Text style={styles.loadingText}>Carregando Aventura...</Text>
           <Text style={styles.loadingSubtext}>Preparando cartas, quiz e progresso.</Text>
         </View>
@@ -478,16 +492,15 @@ export default function FlashcardsTab() {
 
   return (
     <GestureHandlerRootView style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.headerTop}>
-          <View>
-            <Text style={styles.panelEyebrow}>Cartas em andamento</Text>
-            <Text style={styles.headerTitle}>Aventura</Text>
-          </View>
-          {nextBatchAt && (
-            <BatchCountdown expiresAt={nextBatchAt} onExpired={handleExpired} />
-          )}
-        </View>
+      <RootineBackground variant="adventure" />
+      <AppHeader
+        eyebrow="Cartas em andamento"
+        title="Aventura"
+        subtitle="Arraste cada carta como quem escolhe uma bifurcação simples."
+        action={nextBatchAt ? <BatchCountdown expiresAt={nextBatchAt} onExpired={handleExpired} /> : null}
+        compact
+      />
+      <View style={styles.headerMetrics}>
         <ProgressBar progress={progress} />
         <View style={styles.progressSummary}>
           <Text style={styles.counter}>{answeredCount} de {totalCards} respondidas</Text>
@@ -513,181 +526,217 @@ export default function FlashcardsTab() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F0F4F8" },
-  stateContent: {
-    flexGrow: 1,
-    paddingTop: 72,
-    paddingHorizontal: 20,
-    paddingBottom: 34,
-    justifyContent: "center",
-  },
-  heroPanel: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 22,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: "#E0E7E3",
-    shadowColor: "#1B5E20",
-    shadowOpacity: 0.08,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
-  },
-  loadingPanel: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingHorizontal: 28,
-  },
-  header: {
-    paddingTop: 58,
-    paddingHorizontal: 20,
-    paddingBottom: 16,
-    backgroundColor: "#FFFFFF",
-    borderBottomWidth: 1,
-    borderBottomColor: "#E3ECE6",
-  },
-  headerTop: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 14,
-    gap: 14,
-  },
-  panelEyebrow: {
-    color: "#2E7D32",
-    fontSize: 11,
-    fontWeight: "800",
-    letterSpacing: 0.8,
-    textTransform: "uppercase",
-  },
-  headerTitle: { fontSize: 24, fontWeight: "bold", color: "#263238", marginTop: 3 },
-  progressSummary: {
-    marginTop: 10,
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-  },
-  counter: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#2E7D32",
-  },
-  gestureHint: {
-    flex: 1,
-    color: "#78909C",
-    fontSize: 11,
-    fontWeight: "600",
-    textAlign: "right",
-  },
-  cardArea: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    paddingBottom: 38,
-    paddingHorizontal: 20,
-  },
-  cardErrorText: {
-    color: "#B00020",
-    fontSize: 13,
-    marginTop: 16,
-    maxWidth: 360,
-    textAlign: "center",
-  },
-  messageTitle: {
-    fontSize: 26,
-    fontWeight: "bold",
-    color: "#263238",
-    lineHeight: 32,
-    marginTop: 8,
-    marginBottom: 8,
-  },
-  messageSubtitle: {
-    fontSize: 14,
-    color: "#546E7A",
-    lineHeight: 22,
-  },
-  loadingText: { marginTop: 16, fontSize: 17, color: "#263238", fontWeight: "800" },
-  loadingSubtext: { marginTop: 6, color: "#78909C", fontWeight: "600" },
-  adventureInfoBox: {
-    backgroundColor: "#F1F8E9",
-    borderRadius: 14,
-    padding: 13,
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: "#D7E9CC",
-  },
-  adventureInfoText: { color: "#315C39", fontSize: 13, fontWeight: "700", lineHeight: 19 },
-  countdownBox: { alignItems: "center", gap: 8, marginTop: 18 },
-  countdownLabel: { fontSize: 12, color: "#607D8B", fontWeight: "700" },
-  startButton: {
-    backgroundColor: "#2E7D32",
-    paddingVertical: 15,
-    paddingHorizontal: 28,
-    borderRadius: 16,
-    alignItems: "center",
-    marginTop: 20,
-    shadowColor: "#1B5E20",
-    shadowOpacity: 0.18,
-    shadowRadius: 12,
-    shadowOffset: { width: 0, height: 5 },
-    elevation: 2,
-  },
-  startButtonText: { color: "#FFF", fontSize: 16, fontWeight: "bold" },
-  quizPanel: {
-    width: "100%",
-    backgroundColor: "#FFF",
-    borderRadius: 18,
-    padding: 18,
-    marginTop: 16,
-    borderWidth: 1,
-    borderColor: "#E5E0EC",
-  },
-  quizHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 12,
-  },
-  quizTitle: { fontSize: 18, fontWeight: "bold", color: "#1B5E20" },
-  quizBadge: {
-    backgroundColor: "#F3E5F5",
-    color: "#6A1B9A",
-    borderRadius: 999,
-    paddingHorizontal: 10,
-    paddingVertical: 5,
-    fontSize: 11,
-    fontWeight: "800",
-  },
-  quizSubtitle: { color: "#607D8B", marginTop: 8, marginBottom: 14, lineHeight: 19 },
-  quizButton: {
-    backgroundColor: "#6A1B9A",
-    borderRadius: 12,
-    paddingVertical: 13,
-    alignItems: "center",
-  },
-  quizSecondaryButton: { marginTop: 12, backgroundColor: "#2E7D32" },
-  quizButtonText: { color: "#FFF", fontWeight: "bold" },
-  quizQuestion: {
-    color: "#263238",
-    fontSize: 16,
-    fontWeight: "bold",
-    lineHeight: 22,
-    marginBottom: 12,
-  },
-  quizOption: {
-    backgroundColor: "#FAF7FC",
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: "#E5D6EA",
-  },
-  quizOptionCorrect: { backgroundColor: "#C8E6C9", borderWidth: 2, borderColor: "#2E7D32" },
-  quizOptionWrong: { backgroundColor: "#FFCDD2", borderWidth: 2, borderColor: "#C62828" },
-  quizOptionMuted: { opacity: 0.55 },
-  quizOptionText: { color: "#4A148C", fontWeight: "600" },
-  quizResult: { color: "#2E7D32", lineHeight: 20, marginTop: 8, fontWeight: "600" },
-});
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: theme.colors.background,
+    },
+    stateContent: {
+      flexGrow: 1,
+      paddingBottom: 34,
+    },
+    heroPanel: {
+      marginHorizontal: 20,
+      marginTop: 12,
+      backgroundColor: theme.colors.surfaceRaised,
+      borderRadius: 8,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      shadowColor: theme.colors.shadow,
+      shadowOpacity: 0.1,
+      shadowRadius: 18,
+      shadowOffset: { width: 0, height: 8 },
+      elevation: 3,
+    },
+    loadingPanel: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      paddingHorizontal: 28,
+    },
+    headerMetrics: {
+      paddingHorizontal: 20,
+      paddingTop: 12,
+      paddingBottom: 10,
+      backgroundColor: theme.colors.transparentSurface,
+      borderBottomWidth: 1,
+      borderBottomColor: theme.colors.border,
+    },
+    panelEyebrow: {
+      color: theme.colors.accent,
+      fontSize: 11,
+      fontWeight: "800",
+      letterSpacing: 0,
+      textTransform: "uppercase",
+    },
+    progressSummary: {
+      marginTop: 10,
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 12,
+      flexWrap: "wrap",
+    },
+    counter: {
+      fontSize: 12,
+      fontWeight: "800",
+      color: theme.colors.primaryStrong,
+    },
+    gestureHint: {
+      flex: 1,
+      minWidth: 150,
+      color: theme.colors.textSubtle,
+      fontSize: 11,
+      fontWeight: "700",
+      textAlign: "right",
+    },
+    cardArea: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      paddingBottom: 38,
+      paddingHorizontal: 16,
+      paddingTop: 16,
+    },
+    cardErrorText: {
+      color: theme.colors.danger,
+      fontSize: 13,
+      marginTop: 16,
+      maxWidth: 360,
+      textAlign: "center",
+      fontWeight: "700",
+    },
+    messageTitle: {
+      fontSize: 26,
+      fontWeight: "800",
+      color: theme.colors.text,
+      lineHeight: 32,
+      marginTop: 8,
+      marginBottom: 8,
+    },
+    messageSubtitle: {
+      fontSize: 14,
+      color: theme.colors.textMuted,
+      lineHeight: 22,
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 17,
+      color: theme.colors.text,
+      fontWeight: "800",
+    },
+    loadingSubtext: {
+      marginTop: 6,
+      color: theme.colors.textMuted,
+      fontWeight: "700",
+    },
+    adventureInfoBox: {
+      backgroundColor: theme.colors.primarySoft,
+      borderRadius: 8,
+      padding: 13,
+      marginTop: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    adventureInfoText: {
+      color: theme.colors.primaryStrong,
+      fontSize: 13,
+      fontWeight: "700",
+      lineHeight: 19,
+    },
+    countdownBox: { alignItems: "center", gap: 8, marginTop: 18 },
+    countdownLabel: { fontSize: 12, color: theme.colors.textMuted, fontWeight: "700" },
+    startButton: {
+      alignSelf: "flex-start",
+      backgroundColor: theme.colors.primary,
+      paddingVertical: 13,
+      paddingHorizontal: 20,
+      borderRadius: 999,
+      alignItems: "center",
+      marginTop: 20,
+      shadowColor: theme.colors.shadow,
+      shadowOpacity: 0.16,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 5 },
+      elevation: 2,
+    },
+    startButtonText: { color: theme.colors.textOnPrimary, fontSize: 15, fontWeight: "800" },
+    quizPanel: {
+      marginHorizontal: 20,
+      backgroundColor: theme.colors.surface,
+      borderRadius: 8,
+      padding: 18,
+      marginTop: 16,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    quizHeader: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      gap: 12,
+      flexWrap: "wrap",
+    },
+    quizTitle: { fontSize: 18, fontWeight: "800", color: theme.colors.primaryStrong },
+    quizBadge: {
+      backgroundColor: theme.colors.accentSoft,
+      color: theme.colors.accentStrong,
+      borderRadius: 999,
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      fontSize: 11,
+      fontWeight: "800",
+      overflow: "hidden",
+    },
+    quizSubtitle: {
+      color: theme.colors.textMuted,
+      marginTop: 8,
+      marginBottom: 14,
+      lineHeight: 19,
+    },
+    quizButton: {
+      alignSelf: "flex-start",
+      backgroundColor: theme.colors.accent,
+      borderRadius: 999,
+      paddingVertical: 12,
+      paddingHorizontal: 18,
+      alignItems: "center",
+    },
+    quizSecondaryButton: { marginTop: 12, backgroundColor: theme.colors.primary },
+    quizButtonText: { color: theme.colors.textOnPrimary, fontWeight: "800" },
+    quizQuestion: {
+      color: theme.colors.text,
+      fontSize: 16,
+      fontWeight: "800",
+      lineHeight: 22,
+      marginBottom: 12,
+    },
+    quizOption: {
+      backgroundColor: theme.colors.input,
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 8,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    quizOptionCorrect: {
+      backgroundColor: theme.colors.successSoft,
+      borderWidth: 2,
+      borderColor: theme.colors.success,
+    },
+    quizOptionWrong: {
+      backgroundColor: theme.colors.dangerSoft,
+      borderWidth: 2,
+      borderColor: theme.colors.danger,
+    },
+    quizOptionMuted: { opacity: 0.55 },
+    quizOptionText: { color: theme.colors.text, fontWeight: "700" },
+    quizResult: {
+      color: theme.colors.primaryStrong,
+      lineHeight: 20,
+      marginTop: 8,
+      fontWeight: "700",
+    },
+  });

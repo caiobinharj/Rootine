@@ -1,5 +1,7 @@
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import React, { useState } from "react";
 import {
   Modal,
@@ -21,6 +23,8 @@ export default function MissionEditModal({
   visible,
   onClose,
 }: MissionEditModalProps) {
+  const { theme } = useRootineTheme();
+  const styles = createStyles(theme);
   const [input, setInput] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
   const [attemptedSave, setAttemptedSave] = useState(false);
@@ -69,7 +73,7 @@ export default function MissionEditModal({
             style={styles.input}
             multiline
             placeholder="Ex: Não tenho tempo de manhã, prefiro fazer isso à noite..."
-            placeholderTextColor="#999"
+            placeholderTextColor={theme.colors.textSubtle}
             value={input}
             onChangeText={setInput}
             editable={!loading}
@@ -109,51 +113,56 @@ export default function MissionEditModal({
   );
 }
 
-const styles = StyleSheet.create({
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
   overlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.5)",
+    backgroundColor: theme.colors.overlay,
     justifyContent: "flex-end",
   },
   modalContent: {
-    backgroundColor: "#FFF",
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
+    backgroundColor: theme.colors.surfaceRaised,
+    borderTopLeftRadius: 12,
+    borderTopRightRadius: 12,
     padding: 24,
     minHeight: 300,
+    borderTopWidth: 1,
+    borderColor: theme.colors.border,
   },
   title: {
     fontSize: 22,
-    fontWeight: "bold",
-    color: "#2E7D32",
+    fontWeight: "800",
+    color: theme.colors.primaryStrong,
     marginBottom: 8,
   },
   subtitle: {
     fontSize: 14,
-    color: "#546E7A",
+    color: theme.colors.textMuted,
     marginBottom: 20,
     lineHeight: 20,
   },
   input: {
-    backgroundColor: "#F5F5F5",
+    backgroundColor: theme.colors.input,
+    borderWidth: 1,
+    borderColor: theme.colors.border,
     borderRadius: 12,
     padding: 16,
     minHeight: 100,
     textAlignVertical: "top",
     fontSize: 16,
-    color: "#333",
+    color: theme.colors.text,
     marginBottom: 16,
   },
   errorBox: {
-    backgroundColor: "#FFEBEE",
-    borderLeftColor: "#C62828",
+    backgroundColor: theme.colors.dangerSoft,
+    borderLeftColor: theme.colors.danger,
     borderLeftWidth: 4,
     borderRadius: 8,
     padding: 10,
     marginBottom: 16,
   },
   errorText: {
-    color: "#B71C1C",
+    color: theme.colors.danger,
     fontSize: 13,
     lineHeight: 18,
   },
@@ -166,11 +175,11 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
-    backgroundColor: "#EEEEEE",
+    backgroundColor: theme.colors.surfaceMuted,
   },
   cancelText: {
-    color: "#666",
-    fontWeight: "bold",
+    color: theme.colors.textMuted,
+    fontWeight: "800",
     fontSize: 16,
   },
   submitButton: {
@@ -178,14 +187,14 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     borderRadius: 12,
     alignItems: "center",
-    backgroundColor: "#9C27B0",
+    backgroundColor: theme.colors.accent,
   },
   submitButtonDisabled: {
-    backgroundColor: "#CE93D8",
+    backgroundColor: theme.colors.surfacePressed,
   },
   submitText: {
-    color: "#FFF",
-    fontWeight: "bold",
+    color: theme.colors.textOnPrimary,
+    fontWeight: "800",
     fontSize: 16,
   },
 });

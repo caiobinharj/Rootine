@@ -1,7 +1,8 @@
 import { supabase } from "@/lib/supabase";
 import { Session } from "@supabase/supabase-js";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
 import { Stack, useRouter, useSegments } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ActivityIndicator, View } from "react-native";
 
 function isNetworkAuthError(message?: string) {
@@ -17,48 +18,13 @@ function isNetworkAuthError(message?: string) {
 export default function RootLayout() {
   const [session, setSession] = useState<Session | null>(null);
   const [isReady, setIsReady] = useState(false);
+  const { theme } = useRootineTheme();
 
   const segments = useSegments();
   const router = useRouter();
 
-  useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-      setIsReady(true);
-    });
-
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
-
-  useEffect(() => {
-    if (!isReady) return;
-
-    const inAuthGroup = segments[0] === "auth";
-    const inFlashcards = segments[0] === "flashcards";
-    const inDiagnostic = segments[0] === "diagnostic";
-    const inTabs = segments[0] === "(tabs)";
-
-    if (!session) {
-      if (!inAuthGroup) router.replace("/auth");
-    } else {
-      // Já está em rota protegida ou dentro das tabs — não redirecionar
-      if (inFlashcards || inDiagnostic || inTabs) return;
-
-      // Só verificar onboarding se vem de auth ou da raiz
-      if (inAuthGroup || !segments[0]) {
-        checkDiagnosticStatus(session.user.id);
-      }
-    }
-  }, [session, isReady, segments]);
-
   // Função isolada e com tratamento de erro (Evita o 406)
-  const checkDiagnosticStatus = async (userId: string) => {
+  const checkDiagnosticStatus = useCallback(async (userId: string) => {
     try {
       const { data: { user }, error: authError } = await supabase.auth.getUser();
 
@@ -107,12 +73,55 @@ export default function RootLayout() {
         router.replace("/diagnostic");
       }
     }
-  };
+  }, [router, session]);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setIsReady(true);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    if (!isReady) return;
+
+    const inAuthGroup = segments[0] === "auth";
+    const inFlashcards = segments[0] === "flashcards";
+    const inDiagnostic = segments[0] === "diagnostic";
+    const inTabs = segments[0] === "(tabs)";
+
+    if (!session) {
+      if (!inAuthGroup) router.replace("/auth");
+    } else {
+      // Já está em rota protegida ou dentro das tabs — não redirecionar
+      if (inFlashcards || inDiagnostic || inTabs) return;
+
+      // Só verificar onboarding se vem de auth ou da raiz
+      if (inAuthGroup || !segments[0]) {
+        checkDiagnosticStatus(session.user.id);
+      }
+    }
+  }, [checkDiagnosticStatus, isReady, router, segments, session]);
 
   if (!isReady) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
-        <ActivityIndicator size="large" color="#4CAF50" />
+      <View
+        style={{
+          flex: 1,
+          justifyContent: "center",
+          alignItems: "center",
+          backgroundColor: theme.colors.background,
+        }}
+      >
+        <ActivityIndicator size="large" color={theme.colors.primary} />
       </View>
     );
   }

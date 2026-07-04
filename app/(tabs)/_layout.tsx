@@ -3,18 +3,34 @@ import React from 'react';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useRootineTheme } from '@/hooks/useRootineTheme';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  const { theme } = useRootineTheme();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: theme.colors.primaryStrong,
+        tabBarInactiveTintColor: theme.colors.textSubtle,
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarStyle: {
+          backgroundColor: theme.colors.surfaceRaised,
+          borderTopColor: theme.colors.border,
+          height: 70,
+          paddingTop: 8,
+          paddingBottom: 10,
+          shadowColor: theme.colors.shadow,
+          shadowOpacity: 0.12,
+          shadowRadius: 14,
+          shadowOffset: { width: 0, height: -4 },
+          elevation: 12,
+        },
+        tabBarLabelStyle: {
+          fontSize: 11,
+          fontWeight: '700',
+        },
       }}>
       <Tabs.Screen
         name="flashcards"
@@ -39,7 +55,7 @@ export default function TabLayout() {
             transform: [{ translateY: -8 }],
           },
           tabBarLabelStyle: {
-            fontWeight: '700',
+            fontWeight: '800',
           },
         }}
       />

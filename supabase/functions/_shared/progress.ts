@@ -8,14 +8,14 @@ export const XP_LEVEL_THRESHOLDS = [
   { level: 2, xp: 45, milestone: "Folhas novas" },
   { level: 3, xp: 100, milestone: "Muda firme" },
   { level: 4, xp: 180, milestone: "Primeiros galhos" },
-  { level: 5, xp: 300, milestone: "Arvore jovem" },
+  { level: 5, xp: 300, milestone: "Árvore jovem" },
   { level: 6, xp: 470, milestone: "Copa aberta" },
   { level: 7, xp: 700, milestone: "Habitat vivo" },
   { level: 8, xp: 1000, milestone: "Florescimento" },
   { level: 9, xp: 1400, milestone: "Frutos" },
   { level: 10, xp: 1900, milestone: "Ecossistema maduro" },
   { level: 11, xp: 2500, milestone: "Bosque" },
-  { level: 12, xp: 3200, milestone: "Referencia sustentavel" },
+  { level: 12, xp: 3200, milestone: "Referência sustentável" },
 ] as const;
 
 export const MISSION_XP_REWARDS: Record<number, number> = {
@@ -129,7 +129,7 @@ export function getLevelFromXp(rawXp: unknown) {
     xpMin,
     xpNext,
     progress,
-    milestone: known?.milestone ?? `Nivel ${level}`,
+    milestone: known?.milestone ?? `Nível ${level}`,
   };
 }
 

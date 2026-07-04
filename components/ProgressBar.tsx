@@ -5,11 +5,16 @@ import Animated, {
   withSpring,
 } from "react-native-reanimated";
 
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
+
 interface ProgressBarProps {
   progress: number; // 0 a 1
 }
 
 export const ProgressBar = ({ progress }: ProgressBarProps) => {
+  const { theme } = useRootineTheme();
+  const styles = createStyles(theme);
   const animatedStyle = useAnimatedStyle(() => ({
     width: withSpring(`${progress * 100}%`),
   }));
@@ -21,13 +26,18 @@ export const ProgressBar = ({ progress }: ProgressBarProps) => {
   );
 };
 
-const styles = StyleSheet.create({
-  container: {
-    height: 6,
-    backgroundColor: "#E0E0E0",
-    width: "100%",
-    borderRadius: 3,
-    overflow: "hidden",
-  },
-  fill: { height: "100%", backgroundColor: "#4CAF50" },
-});
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: {
+      height: 7,
+      backgroundColor: theme.colors.transparentInk,
+      width: "100%",
+      borderRadius: 999,
+      overflow: "hidden",
+    },
+    fill: {
+      height: "100%",
+      backgroundColor: theme.colors.primary,
+      borderRadius: 999,
+    },
+  });
