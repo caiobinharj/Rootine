@@ -1,3 +1,10 @@
+import { Fonts } from "@/constants/theme";
+import {
+  ROOTINE_THEMES,
+  softShadow,
+  useRootineTheme,
+  type RootineTheme,
+} from "@/constants/rootine-theme";
 import React from "react";
 import {
   Dimensions,
@@ -20,13 +27,16 @@ interface DiagnosticCardProps {
 }
 
 export const DiagnosticCard = ({ question, onAnswer }: DiagnosticCardProps) => {
+  const { night } = useRootineTheme();
+  const styles = night ? STYLES.night : STYLES.day;
+
   return (
     <Animated.View
       entering={FadeInRight}
       exiting={FadeOutLeft}
       style={styles.card}
     >
-      <Text style={styles.typeLabel}>DIAGNÓSTICO INICIAL</Text>
+      <Text style={styles.typeLabel}>Diagnóstico inicial</Text>
       <Text style={styles.questionText}>{question.label}</Text>
 
       <View style={styles.optionsContainer}>
@@ -35,6 +45,7 @@ export const DiagnosticCard = ({ question, onAnswer }: DiagnosticCardProps) => {
             key={opt.value}
             style={styles.optionButton}
             onPress={() => onAnswer(opt.value)}
+            activeOpacity={0.82}
           >
             <Text style={styles.optionText}>{opt.label}</Text>
           </TouchableOpacity>
@@ -44,39 +55,48 @@ export const DiagnosticCard = ({ question, onAnswer }: DiagnosticCardProps) => {
   );
 };
 
-const styles = StyleSheet.create({
-  card: {
-    width: width * 0.9,
-    backgroundColor: "#FFF",
-    borderRadius: 24,
-    padding: 32,
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-  },
-  typeLabel: {
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#4CAF50",
-    marginBottom: 8,
-    letterSpacing: 1.5,
-  },
-  questionText: {
-    fontSize: 22,
-    fontWeight: "bold",
-    color: "#333",
-    marginBottom: 24,
-    lineHeight: 28,
-  },
-  optionsContainer: { gap: 12 },
-  optionButton: {
-    padding: 18,
-    borderRadius: 16,
-    backgroundColor: "#F8F9FA",
-    borderWidth: 1,
-    borderColor: "#E9ECEF",
-    alignItems: "center",
-  },
-  optionText: { fontSize: 14, fontWeight: "600", color: "#495057" },
-});
+const makeStyles = (T: RootineTheme) =>
+  StyleSheet.create({
+    card: {
+      width: width * 0.9,
+      maxWidth: 460,
+      backgroundColor: T.card,
+      borderRadius: 28,
+      borderWidth: 1,
+      borderColor: T.cardBorder,
+      padding: 32,
+      ...softShadow(T),
+    },
+    typeLabel: {
+      fontSize: 11,
+      fontWeight: "700",
+      color: T.accent,
+      marginBottom: 10,
+      letterSpacing: 2.4,
+      textTransform: "uppercase",
+    },
+    questionText: {
+      fontFamily: Fonts.serif,
+      fontSize: 23,
+      fontWeight: "600",
+      color: T.ink,
+      marginBottom: 24,
+      lineHeight: 31,
+      letterSpacing: 0.2,
+    },
+    optionsContainer: { gap: 12 },
+    optionButton: {
+      padding: 17,
+      borderRadius: 16,
+      backgroundColor: T.inputBg,
+      borderWidth: 1,
+      borderColor: T.inputBorder,
+      alignItems: "center",
+    },
+    optionText: { fontSize: 14.5, fontWeight: "600", color: T.ink },
+  });
+
+const STYLES = {
+  day: makeStyles(ROOTINE_THEMES.day),
+  night: makeStyles(ROOTINE_THEMES.night),
+};

@@ -1,20 +1,33 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
+import { Platform } from 'react-native';
 
 import { HapticTab } from '@/components/haptic-tab';
 import { IconSymbol } from '@/components/ui/icon-symbol';
-import { Colors } from '@/constants/theme';
-import { useColorScheme } from '@/hooks/use-color-scheme';
+import { useRootineTheme } from '@/constants/rootine-theme';
 
 export default function TabLayout() {
-  const colorScheme = useColorScheme();
+  const { T, night } = useRootineTheme();
 
   return (
     <Tabs
       screenOptions={{
-        tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
+        tabBarActiveTintColor: night ? '#CFE0B0' : '#4B543C',
+        tabBarInactiveTintColor: night ? 'rgba(240, 233, 214, 0.55)' : '#988D76',
         headerShown: false,
         tabBarButton: HapticTab,
+        tabBarStyle: {
+          backgroundColor: T.glassStrong,
+          borderTopWidth: 1,
+          borderTopColor: T.cardBorder,
+          ...(Platform.OS === 'web'
+            ? ({ backdropFilter: 'blur(16px) saturate(1.15)' } as any)
+            : null),
+        },
+        tabBarLabelStyle: {
+          fontWeight: '600',
+          letterSpacing: 0.3,
+        },
       }}>
       <Tabs.Screen
         name="flashcards"

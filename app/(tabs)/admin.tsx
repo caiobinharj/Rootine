@@ -1,3 +1,11 @@
+import { SceneBackdrop } from "@/components/SceneBackdrop";
+import { Fonts } from "@/constants/theme";
+import {
+  ROOTINE_THEMES,
+  softShadow,
+  useRootineTheme,
+  type RootineTheme,
+} from "@/constants/rootine-theme";
 import { supabase } from "@/lib/supabase";
 import { useFlashcardStore } from "@/store/useFlashcardStore";
 import React, { useState } from "react";
@@ -13,6 +21,8 @@ import {
 export default function AdminTab() {
   const [loading, setLoading] = useState(false);
   const fetchActiveBatch = useFlashcardStore((s) => s.fetchActiveBatch);
+  const { T, night } = useRootineTheme();
+  const styles = night ? STYLES.night : STYLES.day;
 
   const handleResetBatch = async () => {
     setLoading(true);
@@ -87,59 +97,106 @@ export default function AdminTab() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>🛠️ Admin de Desenvolvimento</Text>
-      <Text style={styles.subtitle}>
-        Ferramentas fáceis de apagar antes do deploy final.
-      </Text>
+      <SceneBackdrop night={night} />
+      <View style={styles.panel}>
+        <Text style={styles.eyebrow}>Uso interno</Text>
+        <Text style={styles.title}>Ferramentas de desenvolvimento</Text>
+        <Text style={styles.subtitle}>
+          Ferramentas fáceis de apagar antes do deploy final.
+        </Text>
 
-      {loading ? (
-        <ActivityIndicator size="large" color="#FF5722" style={{ marginTop: 20 }} />
-      ) : (
-        <View style={styles.buttonContainer}>
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#FF9800" }]} onPress={handleResetBatch}>
-            <Text style={styles.buttonText}>🔄 Reiniciar Lote Atual</Text>
-          </TouchableOpacity>
+        {loading ? (
+          <ActivityIndicator size="large" color={T.moss} style={{ marginTop: 20 }} />
+        ) : (
+          <View style={styles.buttonContainer}>
+            <TouchableOpacity style={[styles.button, styles.warnButton]} onPress={handleResetBatch}>
+              <Text style={styles.warnButtonText}>Reiniciar lote atual</Text>
+            </TouchableOpacity>
 
-          <TouchableOpacity style={[styles.button, { backgroundColor: "#F44336" }]} onPress={handleClearContext}>
-            <Text style={styles.buttonText}>🗑️ Apagar Contexto (Cérebro)</Text>
-          </TouchableOpacity>
-        </View>
-      )}
+            <TouchableOpacity style={[styles.button, styles.dangerButton]} onPress={handleClearContext}>
+              <Text style={styles.dangerButtonText}>Apagar contexto aprendido</Text>
+            </TouchableOpacity>
+          </View>
+        )}
+      </View>
     </View>
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    padding: 24,
-    backgroundColor: "#F0F4F8",
-    justifyContent: "center",
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: "bold",
-    color: "#333",
-    textAlign: "center",
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 14,
-    color: "#666",
-    textAlign: "center",
-    marginBottom: 40,
-  },
-  buttonContainer: {
-    gap: 16,
-  },
-  button: {
-    padding: 16,
-    borderRadius: 12,
-    alignItems: "center",
-  },
-  buttonText: {
-    color: "#FFF",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
-});
+const makeStyles = (T: RootineTheme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      padding: 24,
+      backgroundColor: T.bg,
+      justifyContent: "center",
+    },
+    panel: {
+      backgroundColor: T.card,
+      borderWidth: 1,
+      borderColor: T.cardBorder,
+      borderRadius: 28,
+      padding: 26,
+      width: "100%",
+      maxWidth: 480,
+      alignSelf: "center",
+      ...softShadow(T),
+    },
+    eyebrow: {
+      color: T.accent,
+      fontSize: 11,
+      fontWeight: "700",
+      letterSpacing: 2.4,
+      textTransform: "uppercase",
+      textAlign: "center",
+    },
+    title: {
+      fontFamily: Fonts.serif,
+      fontSize: 23,
+      fontWeight: "600",
+      color: T.ink,
+      textAlign: "center",
+      marginTop: 8,
+      marginBottom: 8,
+      letterSpacing: 0.2,
+    },
+    subtitle: {
+      fontSize: 14,
+      color: T.inkSoft,
+      textAlign: "center",
+      marginBottom: 28,
+      lineHeight: 21,
+    },
+    buttonContainer: {
+      gap: 14,
+    },
+    button: {
+      padding: 16,
+      borderRadius: 16,
+      alignItems: "center",
+      borderWidth: 1,
+    },
+    warnButton: {
+      backgroundColor: T.warnSoft,
+      borderColor: T.warn,
+    },
+    warnButtonText: {
+      color: T.warn,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+    dangerButton: {
+      backgroundColor: T.dangerSoft,
+      borderColor: T.danger,
+    },
+    dangerButtonText: {
+      color: T.danger,
+      fontSize: 15,
+      fontWeight: "700",
+    },
+  });
+
+const STYLES = {
+  day: makeStyles(ROOTINE_THEMES.day),
+  night: makeStyles(ROOTINE_THEMES.night),
+};

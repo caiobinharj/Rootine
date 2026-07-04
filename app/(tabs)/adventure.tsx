@@ -1,4 +1,12 @@
 import MissionCard from "@/components/MissionCard";
+import { SceneBackdrop } from "@/components/SceneBackdrop";
+import { Fonts } from "@/constants/theme";
+import {
+  ROOTINE_THEMES,
+  softShadow,
+  useRootineTheme,
+  type RootineTheme,
+} from "@/constants/rootine-theme";
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
 import { useFocusEffect } from "expo-router";
@@ -26,6 +34,8 @@ export default function AdventureScreen() {
     clearLastNotice,
   } = useEcoStore();
   const [userId, setUserId] = useState<string | null>(null);
+  const { T, night } = useRootineTheme();
+  const styles = night ? STYLES.night : STYLES.day;
 
   const loadMissions = useCallback(async () => {
     const {
@@ -79,7 +89,8 @@ export default function AdventureScreen() {
   if (loading && missions.length === 0) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#4CAF50" />
+        <SceneBackdrop night={night} />
+        <ActivityIndicator size="large" color={T.moss} />
         <Text style={styles.loadingText}>
           A Trilha está compondo sua próxima missão...
         </Text>
@@ -89,6 +100,8 @@ export default function AdventureScreen() {
 
   return (
     <View style={styles.container}>
+      <SceneBackdrop night={night} />
+      <Text style={styles.eyebrow}>Caminho do guardião</Text>
       <Text style={styles.title}>Trilha</Text>
       <Text style={styles.subtitle}>
         Missões diárias e semanais ajustadas ao seu perfil e aos seus fatos aprendidos.
@@ -111,7 +124,7 @@ export default function AdventureScreen() {
           onPress={() => handleGenerate("specialized")}
           disabled={loading}
         >
-          <Text style={styles.actionText}>{loading ? "Gerando..." : "Gerar semanal"}</Text>
+          <Text style={styles.specializedText}>{loading ? "Gerando..." : "Gerar semanal"}</Text>
         </TouchableOpacity>
       </View>
 
@@ -119,11 +132,15 @@ export default function AdventureScreen() {
         data={missions}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={
-          <View>
-            <Text style={styles.sectionTitle}>Diárias: {dailyMissions.length}</Text>
-            <Text style={styles.sectionTitle}>
-              Semanais: {specializedMissions.length}
-            </Text>
+          <View style={styles.sectionRow}>
+            <View style={styles.sectionChip}>
+              <Text style={styles.sectionChipText}>Diárias · {dailyMissions.length}</Text>
+            </View>
+            <View style={styles.sectionChip}>
+              <Text style={styles.sectionChipText}>
+                Semanais · {specializedMissions.length}
+              </Text>
+            </View>
           </View>
         }
         renderItem={({ item }) => (
@@ -151,7 +168,7 @@ export default function AdventureScreen() {
 
       {lastProgressEvent ? (
         <View style={styles.progressToast}>
-          <View style={styles.progressToastHeader}>
+          <View style={styles.toastHeader}>
             <Text style={styles.progressTitle}>Progresso registrado</Text>
             <TouchableOpacity onPress={clearProgressEvent} hitSlop={8}>
               <Text style={styles.progressDismiss}>OK</Text>
@@ -171,7 +188,7 @@ export default function AdventureScreen() {
 
       {lastError ? (
         <View style={styles.errorToast}>
-          <View style={styles.errorToastHeader}>
+          <View style={styles.toastHeader}>
             <Text style={styles.errorTitle}>Missão não gerada</Text>
             <TouchableOpacity onPress={clearLastError} hitSlop={8}>
               <Text style={styles.errorDismiss}>OK</Text>
@@ -183,7 +200,7 @@ export default function AdventureScreen() {
 
       {lastNotice ? (
         <View style={styles.noticeToast}>
-          <View style={styles.errorToastHeader}>
+          <View style={styles.toastHeader}>
             <Text style={styles.noticeTitle}>Limite de missões</Text>
             <TouchableOpacity onPress={clearLastNotice} hitSlop={8}>
               <Text style={styles.noticeDismiss}>OK</Text>
@@ -196,122 +213,146 @@ export default function AdventureScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F0F4F8",
-    paddingHorizontal: 20,
-    paddingTop: 60,
-  },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 10, color: "#666" },
-  title: {
-    fontSize: 30,
-    fontWeight: "bold",
-    color: "#1B5E20",
-  },
-  subtitle: {
-    color: "#607D8B",
-    lineHeight: 20,
-    marginTop: 6,
-    marginBottom: 18,
-  },
-  actions: { flexDirection: "row", gap: 10, marginBottom: 16 },
-  actionButton: {
-    flex: 1,
-    backgroundColor: "#2E7D32",
-    paddingVertical: 13,
-    borderRadius: 14,
-    alignItems: "center",
-  },
-  actionButtonDisabled: { opacity: 0.68 },
-  specializedButton: { backgroundColor: "#7B1FA2" },
-  actionText: { color: "#FFF", fontWeight: "bold" },
-  sectionTitle: {
-    color: "#607D8B",
-    fontWeight: "700",
-    marginBottom: 4,
-  },
-  emptyContainer: { marginTop: 80, alignItems: "center" },
-  emptyText: { color: "#78909C", textAlign: "center", lineHeight: 22 },
-  listPadding: { paddingBottom: 40 },
-  errorToast: {
-    position: "absolute",
-    right: 16,
-    top: 54,
-    zIndex: 35,
-    minWidth: 260,
-    maxWidth: 380,
-    backgroundColor: "#FFEBEE",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: "#C62828",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  errorToastHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  errorTitle: { color: "#B71C1C", fontWeight: "bold", marginBottom: 4 },
-  errorText: { color: "#C62828", lineHeight: 20 },
-  errorDismiss: { color: "#B71C1C", fontWeight: "bold" },
-  noticeToast: {
-    position: "absolute",
-    right: 16,
-    top: 54,
-    zIndex: 34,
-    minWidth: 260,
-    maxWidth: 380,
-    backgroundColor: "#E3F2FD",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: "#1976D2",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  noticeTitle: { color: "#0D47A1", fontWeight: "bold", marginBottom: 4 },
-  noticeText: { color: "#1565C0", lineHeight: 20 },
-  noticeDismiss: { color: "#0D47A1", fontWeight: "bold" },
-  progressToast: {
-    position: "absolute",
-    right: 16,
-    bottom: 22,
-    zIndex: 30,
-    minWidth: 240,
-    maxWidth: 360,
-    backgroundColor: "#E8F5E9",
-    borderRadius: 14,
-    paddingHorizontal: 14,
-    paddingVertical: 12,
-    borderLeftWidth: 4,
-    borderLeftColor: "#2E7D32",
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.16,
-    shadowRadius: 12,
-    elevation: 8,
-  },
-  progressToastHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-    gap: 12,
-  },
-  progressTitle: { color: "#1B5E20", fontWeight: "bold" },
-  progressText: { color: "#2E7D32", fontWeight: "700", lineHeight: 20 },
-  progressPendingText: { color: "#607D8B", fontSize: 12, marginTop: 2 },
-  progressDismiss: { color: "#1B5E20", fontWeight: "bold" },
-});
+const makeStyles = (T: RootineTheme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: T.bg,
+      paddingHorizontal: 20,
+      paddingTop: 60,
+    },
+    centered: {
+      flex: 1,
+      backgroundColor: T.bg,
+      justifyContent: "center",
+      alignItems: "center",
+      paddingHorizontal: 30,
+    },
+    loadingText: { marginTop: 12, color: T.inkSoft, textAlign: "center", lineHeight: 21 },
+    eyebrow: {
+      color: T.accent,
+      fontSize: 11,
+      fontWeight: "700",
+      letterSpacing: 2.6,
+      textTransform: "uppercase",
+    },
+    title: {
+      fontFamily: Fonts.serif,
+      fontSize: 32,
+      fontWeight: "600",
+      color: T.ink,
+      marginTop: 6,
+      letterSpacing: 0.2,
+    },
+    subtitle: {
+      color: T.inkSoft,
+      lineHeight: 21,
+      marginTop: 6,
+      marginBottom: 18,
+      maxWidth: 460,
+    },
+    actions: { flexDirection: "row", gap: 10, marginBottom: 16 },
+    actionButton: {
+      flex: 1,
+      backgroundColor: T.moss,
+      paddingVertical: 13,
+      borderRadius: 16,
+      alignItems: "center",
+      ...softShadow(T),
+    },
+    actionButtonDisabled: { opacity: 0.65 },
+    specializedButton: {
+      backgroundColor: "transparent",
+      borderWidth: 1,
+      borderColor: T.accent,
+      shadowOpacity: 0,
+      elevation: 0,
+    },
+    actionText: { color: T.onMoss, fontWeight: "700", letterSpacing: 0.3 },
+    specializedText: { color: T.accent, fontWeight: "700", letterSpacing: 0.3 },
+    sectionRow: { flexDirection: "row", gap: 8, marginBottom: 6 },
+    sectionChip: {
+      backgroundColor: T.chipBg,
+      borderWidth: 1,
+      borderColor: T.chipBorder,
+      borderRadius: 999,
+      paddingHorizontal: 12,
+      paddingVertical: 6,
+    },
+    sectionChipText: { color: T.chipText, fontWeight: "700", fontSize: 12 },
+    emptyContainer: { marginTop: 80, alignItems: "center" },
+    emptyText: { color: T.inkFaint, textAlign: "center", lineHeight: 22, maxWidth: 320 },
+    listPadding: { paddingBottom: 40 },
+    toastHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    errorToast: {
+      position: "absolute",
+      right: 16,
+      top: 54,
+      zIndex: 35,
+      minWidth: 260,
+      maxWidth: 380,
+      backgroundColor: T.card,
+      borderRadius: 18,
+      paddingHorizontal: 15,
+      paddingVertical: 13,
+      borderWidth: 1,
+      borderColor: T.cardBorder,
+      borderLeftWidth: 3,
+      borderLeftColor: T.danger,
+      ...softShadow(T),
+    },
+    errorTitle: { color: T.danger, fontWeight: "700", marginBottom: 4 },
+    errorText: { color: T.inkSoft, lineHeight: 20 },
+    errorDismiss: { color: T.danger, fontWeight: "700" },
+    noticeToast: {
+      position: "absolute",
+      right: 16,
+      top: 54,
+      zIndex: 34,
+      minWidth: 260,
+      maxWidth: 380,
+      backgroundColor: T.card,
+      borderRadius: 18,
+      paddingHorizontal: 15,
+      paddingVertical: 13,
+      borderWidth: 1,
+      borderColor: T.cardBorder,
+      borderLeftWidth: 3,
+      borderLeftColor: T.accent,
+      ...softShadow(T),
+    },
+    noticeTitle: { color: T.accent, fontWeight: "700", marginBottom: 4 },
+    noticeText: { color: T.inkSoft, lineHeight: 20 },
+    noticeDismiss: { color: T.accent, fontWeight: "700" },
+    progressToast: {
+      position: "absolute",
+      right: 16,
+      bottom: 22,
+      zIndex: 30,
+      minWidth: 240,
+      maxWidth: 360,
+      backgroundColor: T.card,
+      borderRadius: 18,
+      paddingHorizontal: 15,
+      paddingVertical: 13,
+      borderWidth: 1,
+      borderColor: T.cardBorder,
+      borderLeftWidth: 3,
+      borderLeftColor: T.moss,
+      ...softShadow(T),
+    },
+    progressTitle: { color: T.mossDeep, fontWeight: "700" },
+    progressText: { color: T.ink, fontWeight: "600", lineHeight: 20, marginTop: 2 },
+    progressPendingText: { color: T.inkFaint, fontSize: 12, marginTop: 2 },
+    progressDismiss: { color: T.mossDeep, fontWeight: "700" },
+  });
+
+const STYLES = {
+  day: makeStyles(ROOTINE_THEMES.day),
+  night: makeStyles(ROOTINE_THEMES.night),
+};

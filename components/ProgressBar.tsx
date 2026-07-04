@@ -1,3 +1,4 @@
+import { useRootineTheme } from "@/constants/rootine-theme";
 import React from "react";
 import { StyleSheet, View } from "react-native";
 import Animated, {
@@ -10,13 +11,16 @@ interface ProgressBarProps {
 }
 
 export const ProgressBar = ({ progress }: ProgressBarProps) => {
+  const { T } = useRootineTheme();
   const animatedStyle = useAnimatedStyle(() => ({
     width: withSpring(`${progress * 100}%`),
   }));
 
   return (
-    <View style={styles.container}>
-      <Animated.View style={[styles.fill, animatedStyle]} />
+    <View style={[styles.container, { backgroundColor: T.track }]}>
+      <Animated.View
+        style={[styles.fill, { backgroundColor: T.progressFill }, animatedStyle]}
+      />
     </View>
   );
 };
@@ -24,10 +28,9 @@ export const ProgressBar = ({ progress }: ProgressBarProps) => {
 const styles = StyleSheet.create({
   container: {
     height: 6,
-    backgroundColor: "#E0E0E0",
     width: "100%",
-    borderRadius: 3,
+    borderRadius: 999,
     overflow: "hidden",
   },
-  fill: { height: "100%", backgroundColor: "#4CAF50" },
+  fill: { height: "100%", borderRadius: 999 },
 });

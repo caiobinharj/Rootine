@@ -1,5 +1,11 @@
 import { DiagnosticCard } from "@/components/DiagnosticCard";
 import { ProgressBar } from "@/components/ProgressBar";
+import { SceneBackdrop } from "@/components/SceneBackdrop";
+import {
+  ROOTINE_THEMES,
+  useRootineTheme,
+  type RootineTheme,
+} from "@/constants/rootine-theme";
 import {
   ONBOARDING_QUESTIONS,
   type OnboardingAnswers,
@@ -14,6 +20,8 @@ export default function DiagnosticScreen() {
   const [answers, setAnswers] = useState<OnboardingAnswers>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const router = useRouter();
+  const { T, night } = useRootineTheme();
+  const styles = night ? STYLES.night : STYLES.day;
 
   const handleAnswer = async (value: string) => {
     if (isSubmitting) return;
@@ -76,7 +84,8 @@ export default function DiagnosticScreen() {
   if (isSubmitting) {
     return (
       <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#4CAF50" />
+        <SceneBackdrop night={night} />
+        <ActivityIndicator size="large" color={T.moss} />
         <Text style={styles.loadingText}>Preparando seu habitat...</Text>
       </View>
     );
@@ -84,7 +93,10 @@ export default function DiagnosticScreen() {
 
   return (
     <View style={styles.container}>
-      <ProgressBar progress={(currentStep + 1) / ONBOARDING_QUESTIONS.length} />
+      <SceneBackdrop night={night} />
+      <View style={styles.progressWrap}>
+        <ProgressBar progress={(currentStep + 1) / ONBOARDING_QUESTIONS.length} />
+      </View>
 
       <View style={styles.content}>
         <DiagnosticCard
@@ -99,31 +111,39 @@ export default function DiagnosticScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F0F4F8", paddingTop: 60 },
-  content: {
-    flex: 1,
-    alignItems: "center",
-    justifyContent: "center",
-    paddingBottom: 40,
-  },
-  counter: {
-    marginTop: 24,
-    fontSize: 12,
-    fontWeight: "bold",
-    color: "#999",
-    letterSpacing: 1,
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: "center",
-    alignItems: "center",
-    backgroundColor: "#F0F4F8",
-  },
-  loadingText: {
-    marginTop: 16,
-    fontSize: 16,
-    color: "#333",
-    fontWeight: "500",
-  },
-});
+const makeStyles = (T: RootineTheme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: T.bg, paddingTop: 60 },
+    progressWrap: { paddingHorizontal: 24 },
+    content: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      paddingBottom: 40,
+    },
+    counter: {
+      marginTop: 24,
+      fontSize: 12,
+      fontWeight: "700",
+      color: T.inkFaint,
+      letterSpacing: 2,
+      textTransform: "uppercase",
+    },
+    loadingContainer: {
+      flex: 1,
+      justifyContent: "center",
+      alignItems: "center",
+      backgroundColor: T.bg,
+    },
+    loadingText: {
+      marginTop: 16,
+      fontSize: 16,
+      color: T.ink,
+      fontWeight: "600",
+    },
+  });
+
+const STYLES = {
+  day: makeStyles(ROOTINE_THEMES.day),
+  night: makeStyles(ROOTINE_THEMES.night),
+};

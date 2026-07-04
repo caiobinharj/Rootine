@@ -1,3 +1,4 @@
+import { useRootineTheme } from "@/constants/rootine-theme";
 import React, { useEffect, useState } from "react";
 import { StyleSheet, Text, View } from "react-native";
 
@@ -7,6 +8,7 @@ interface BatchCountdownProps {
 }
 
 export const BatchCountdown = ({ expiresAt, onExpired }: BatchCountdownProps) => {
+  const { T } = useRootineTheme();
   const [timeLeft, setTimeLeft] = useState("");
 
   useEffect(() => {
@@ -43,9 +45,9 @@ export const BatchCountdown = ({ expiresAt, onExpired }: BatchCountdownProps) =>
   }, [expiresAt, onExpired]);
 
   return (
-    <View style={styles.badge}>
-      <Text style={styles.icon}>⏱</Text>
-      <Text style={styles.text}>{timeLeft}</Text>
+    <View style={[styles.badge, { backgroundColor: T.chipBg, borderColor: T.chipBorder }]}>
+      <View style={[styles.dot, { backgroundColor: T.accent }]} />
+      <Text style={[styles.text, { color: T.chipText }]}>{timeLeft}</Text>
     </View>
   );
 };
@@ -54,19 +56,21 @@ const styles = StyleSheet.create({
   badge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#FFF3E0",
     paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 20,
-    gap: 6,
+    paddingHorizontal: 14,
+    borderRadius: 999,
+    borderWidth: 1,
+    gap: 8,
   },
-  icon: {
-    fontSize: 14,
+  dot: {
+    width: 7,
+    height: 7,
+    borderRadius: 999,
   },
   text: {
-    fontSize: 14,
-    fontWeight: "bold",
-    color: "#E65100",
+    fontSize: 13,
+    fontWeight: "700",
+    letterSpacing: 0.4,
     fontVariant: ["tabular-nums"],
   },
 });

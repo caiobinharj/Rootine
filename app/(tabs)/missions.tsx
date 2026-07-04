@@ -1,7 +1,14 @@
-import { useFocusEffect } from "expo-router";
 import MissionCard from "@/components/MissionCard";
+import { SceneBackdrop } from "@/components/SceneBackdrop";
+import { Fonts } from "@/constants/theme";
+import {
+  ROOTINE_THEMES,
+  useRootineTheme,
+  type RootineTheme,
+} from "@/constants/rootine-theme";
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
+import { useFocusEffect } from "expo-router";
 import React, { useCallback } from "react";
 import {
   ActivityIndicator,
@@ -13,6 +20,8 @@ import {
 
 export default function MissionsScreen() {
   const { missions, fetchPendingMissions, loading } = useEcoStore();
+  const { T, night } = useRootineTheme();
+  const styles = night ? STYLES.night : STYLES.day;
 
   const loadMissions = useCallback(async () => {
     const {
@@ -31,7 +40,8 @@ export default function MissionsScreen() {
   if (loading && missions.length === 0) {
     return (
       <View style={styles.centered}>
-        <ActivityIndicator size="large" color="#4CAF50" />
+        <SceneBackdrop night={night} />
+        <ActivityIndicator size="large" color={T.moss} />
         <Text style={styles.loadingText}>
           O Guardião está preparando suas missões personalizadas...
         </Text>
@@ -41,7 +51,9 @@ export default function MissionsScreen() {
 
   return (
     <View style={styles.container}>
-      <Text style={styles.title}>Missions</Text>
+      <SceneBackdrop night={night} />
+      <Text style={styles.eyebrow}>Protocolos do dia</Text>
+      <Text style={styles.title}>Missões</Text>
       <FlatList
         data={missions}
         keyExtractor={(item) => item.id}
@@ -69,22 +81,44 @@ export default function MissionsScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: "#F0F4F8",
-    paddingHorizontal: 20,
-    paddingTop: 60,
-  },
-  centered: { flex: 1, justifyContent: "center", alignItems: "center" },
-  loadingText: { marginTop: 10, color: "#666" },
-  title: {
-    fontSize: 28,
-    fontWeight: "bold",
-    color: "#1B5E20",
-    marginBottom: 20,
-  },
-  emptyContainer: { marginTop: 100, alignItems: "center" },
-  emptyText: { color: "#999", fontSize: 16, textAlign: "center" },
-  listPadding: { paddingBottom: 40 },
-});
+const makeStyles = (T: RootineTheme) =>
+  StyleSheet.create({
+    container: {
+      flex: 1,
+      backgroundColor: T.bg,
+      paddingHorizontal: 20,
+      paddingTop: 60,
+    },
+    centered: {
+      flex: 1,
+      backgroundColor: T.bg,
+      justifyContent: "center",
+      alignItems: "center",
+      paddingHorizontal: 30,
+    },
+    loadingText: { marginTop: 12, color: T.inkSoft, textAlign: "center", lineHeight: 21 },
+    eyebrow: {
+      color: T.accent,
+      fontSize: 11,
+      fontWeight: "700",
+      letterSpacing: 2.6,
+      textTransform: "uppercase",
+    },
+    title: {
+      fontFamily: Fonts.serif,
+      fontSize: 30,
+      fontWeight: "600",
+      color: T.ink,
+      marginTop: 6,
+      marginBottom: 16,
+      letterSpacing: 0.2,
+    },
+    emptyContainer: { marginTop: 100, alignItems: "center" },
+    emptyText: { color: T.inkFaint, fontSize: 15, textAlign: "center", lineHeight: 23 },
+    listPadding: { paddingBottom: 40 },
+  });
+
+const STYLES = {
+  day: makeStyles(ROOTINE_THEMES.day),
+  night: makeStyles(ROOTINE_THEMES.night),
+};

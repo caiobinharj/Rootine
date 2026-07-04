@@ -1,3 +1,10 @@
+import { Fonts } from "@/constants/theme";
+import {
+  ROOTINE_THEMES,
+  softShadow,
+  useRootineTheme,
+  type RootineTheme,
+} from "@/constants/rootine-theme";
 import { useEcoStore } from "@/store/useEcoStore";
 import dayjs from "dayjs";
 import "dayjs/locale/pt-br";
@@ -30,6 +37,8 @@ export default function MissionCard({
 }: MissionCardProps) {
   const { completeMission, failMission, refuseMission } = useEcoStore();
   const [editModalVisible, setEditModalVisible] = useState(false);
+  const { night } = useRootineTheme();
+  const styles = night ? STYLES.night : STYLES.day;
 
   const timeLeft = dayjs(expiresAt).fromNow();
   const isExpired = dayjs().isAfter(dayjs(expiresAt));
@@ -41,17 +50,25 @@ export default function MissionCard({
       <View style={styles.card}>
         <View style={styles.header}>
           <View style={styles.badgeRow}>
-            <Text style={styles.categoryTag}>
-              {category?.toUpperCase() || "GERAL"}
-            </Text>
-            <Text style={styles.deadlineTag}>⌛ {timeLeft}</Text>
+            <View style={styles.categoryChip}>
+              <Text style={styles.categoryChipText}>
+                {category?.toUpperCase() || "GERAL"}
+              </Text>
+            </View>
+            <View style={styles.deadlineChip}>
+              <Text style={styles.deadlineChipText}>expira {timeLeft}</Text>
+            </View>
           </View>
-          
+
           <View style={styles.rightHeader}>
-            <TouchableOpacity onPress={() => setEditModalVisible(true)} style={styles.editButton}>
-              <Text style={styles.editText}>✏️ Editar</Text>
+            <TouchableOpacity
+              onPress={() => setEditModalVisible(true)}
+              style={styles.editButton}
+              activeOpacity={0.8}
+            >
+              <Text style={styles.editText}>Ajustar</Text>
             </TouchableOpacity>
-            <Text style={styles.xpText}>+{xp} XP missão</Text>
+            <Text style={styles.xpText}>+{xp} XP</Text>
           </View>
         </View>
 
@@ -59,7 +76,7 @@ export default function MissionCard({
         <Text style={styles.description}>{description}</Text>
 
         <View style={styles.aiBox}>
-          <Text style={styles.aiLabel}>POR QUE ESTA MISSÃO?</Text>
+          <Text style={styles.aiLabel}>Por que esta missão</Text>
           <Text style={styles.aiContent}>{justification}</Text>
         </View>
 
@@ -96,115 +113,135 @@ export default function MissionCard({
   );
 }
 
-const styles = StyleSheet.create({
-  card: {
-    backgroundColor: "#FFFFFF",
-    borderRadius: 20,
-    padding: 20,
-    marginVertical: 10,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 4 },
-    shadowOpacity: 0.1,
-    shadowRadius: 8,
-    elevation: 5,
-  },
-  header: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  rightHeader: {
-    flexDirection: "row",
-    alignItems: "center",
-    gap: 8,
-  },
-  editButton: {
-    backgroundColor: "#F3E5F5",
-    paddingHorizontal: 8,
-    paddingVertical: 4,
-    borderRadius: 6,
-  },
-  editText: {
-    color: "#9C27B0",
-    fontSize: 10,
-    fontWeight: "bold",
-  },
-  badgeRow: { flexDirection: "row", gap: 8 },
-  categoryTag: {
-    backgroundColor: "#E8F5E9",
-    color: "#2E7D32",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    fontSize: 10,
-    fontWeight: "bold",
-  },
-  deadlineTag: {
-    backgroundColor: "#FFF3E0",
-    color: "#E65100",
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 6,
-    fontSize: 10,
-    fontWeight: "bold",
-  },
-  xpText: { color: "#1976D2", fontWeight: "bold", fontSize: 14 },
-  cardTitle: {
-    fontSize: 20,
-    fontWeight: "bold",
-    color: "#1B5E20",
-    marginBottom: 6,
-  },
-  description: {
-    fontSize: 14,
-    color: "#546E7A",
-    marginBottom: 16,
-    lineHeight: 20,
-  },
-  aiBox: {
-    backgroundColor: "#F3E5F5",
-    borderLeftWidth: 4,
-    borderLeftColor: "#9C27B0",
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 20,
-  },
-  aiLabel: {
-    fontSize: 9,
-    fontWeight: "bold",
-    color: "#7B1FA2",
-    marginBottom: 4,
-    letterSpacing: 1,
-  },
-  aiContent: {
-    fontSize: 13,
-    fontStyle: "italic",
-    color: "#4A148C",
-    lineHeight: 18,
-  },
-  actions: { flexDirection: "row", gap: 8 },
-  button: {
-    flex: 1,
-    minHeight: 46,
-    paddingHorizontal: 6,
-    paddingVertical: 12,
-    borderRadius: 12,
-    alignItems: "center",
-    justifyContent: "center",
-  },
-  completeButton: { backgroundColor: "#4CAF50" },
-  failButton: {
-    backgroundColor: "#FFF8E1",
-    borderWidth: 1,
-    borderColor: "#F9A825",
-  },
-  refuseButton: {
-    backgroundColor: "transparent",
-    borderWidth: 1,
-    borderColor: "#FF5252",
-  },
-  buttonText: { color: "#FFF", fontWeight: "bold", fontSize: 14 },
-  failText: { color: "#F57F17", fontWeight: "bold", fontSize: 13, textAlign: "center" },
-  refuseText: { color: "#FF5252", fontWeight: "bold", fontSize: 14 },
-});
+const makeStyles = (T: RootineTheme) =>
+  StyleSheet.create({
+    card: {
+      backgroundColor: T.card,
+      borderRadius: 26,
+      padding: 20,
+      marginVertical: 10,
+      borderWidth: 1,
+      borderColor: T.cardBorder,
+      ...softShadow(T),
+    },
+    header: {
+      flexDirection: "row",
+      justifyContent: "space-between",
+      alignItems: "center",
+      flexWrap: "wrap",
+      gap: 8,
+      marginBottom: 14,
+    },
+    rightHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 10,
+    },
+    editButton: {
+      paddingHorizontal: 10,
+      paddingVertical: 5,
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: T.cardBorder,
+      backgroundColor: T.claySoft,
+    },
+    editText: {
+      color: T.accent,
+      fontSize: 11,
+      fontWeight: "700",
+      letterSpacing: 0.4,
+    },
+    badgeRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
+    categoryChip: {
+      backgroundColor: T.chipBg,
+      borderWidth: 1,
+      borderColor: T.chipBorder,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    categoryChipText: {
+      color: T.chipText,
+      fontSize: 10,
+      fontWeight: "700",
+      letterSpacing: 1,
+    },
+    deadlineChip: {
+      backgroundColor: T.claySoft,
+      paddingHorizontal: 10,
+      paddingVertical: 4,
+      borderRadius: 999,
+    },
+    deadlineChipText: {
+      color: T.accent,
+      fontSize: 10,
+      fontWeight: "700",
+      letterSpacing: 0.3,
+    },
+    xpText: { color: T.mossDeep, fontWeight: "800", fontSize: 13, letterSpacing: 0.3 },
+    cardTitle: {
+      fontFamily: Fonts.serif,
+      fontSize: 20,
+      fontWeight: "600",
+      color: T.ink,
+      marginBottom: 6,
+      letterSpacing: 0.2,
+    },
+    description: {
+      fontSize: 14,
+      color: T.inkSoft,
+      marginBottom: 16,
+      lineHeight: 21,
+    },
+    aiBox: {
+      backgroundColor: T.claySoft,
+      borderLeftWidth: 3,
+      borderLeftColor: T.accent,
+      padding: 13,
+      borderRadius: 14,
+      marginBottom: 18,
+    },
+    aiLabel: {
+      fontSize: 10,
+      fontWeight: "700",
+      color: T.accent,
+      marginBottom: 5,
+      letterSpacing: 1.6,
+      textTransform: "uppercase",
+    },
+    aiContent: {
+      fontSize: 13,
+      fontStyle: "italic",
+      color: T.inkSoft,
+      lineHeight: 19,
+    },
+    actions: { flexDirection: "row", gap: 8 },
+    button: {
+      flex: 1,
+      minHeight: 46,
+      paddingHorizontal: 6,
+      paddingVertical: 12,
+      borderRadius: 15,
+      alignItems: "center",
+      justifyContent: "center",
+    },
+    completeButton: { backgroundColor: T.moss },
+    failButton: {
+      backgroundColor: T.warnSoft,
+      borderWidth: 1,
+      borderColor: T.warn,
+    },
+    refuseButton: {
+      backgroundColor: "transparent",
+      borderWidth: 1,
+      borderColor: T.danger,
+    },
+    buttonText: { color: T.onMoss, fontWeight: "700", fontSize: 14, letterSpacing: 0.3 },
+    failText: { color: T.warn, fontWeight: "700", fontSize: 13, textAlign: "center" },
+    refuseText: { color: T.danger, fontWeight: "700", fontSize: 14 },
+  });
+
+const STYLES = {
+  day: makeStyles(ROOTINE_THEMES.day),
+  night: makeStyles(ROOTINE_THEMES.night),
+};

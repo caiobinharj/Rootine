@@ -1,3 +1,11 @@
+import { SceneBackdrop } from "@/components/SceneBackdrop";
+import { Fonts } from "@/constants/theme";
+import {
+  ROOTINE_THEMES,
+  softShadow,
+  useRootineTheme,
+  type RootineTheme,
+} from "@/constants/rootine-theme";
 import { supabase } from "@/lib/supabase";
 import { useRouter } from "expo-router";
 import React, { useState } from "react";
@@ -67,6 +75,8 @@ export default function AuthScreen() {
   const [fullName, setFullName] = useState("");
   const [loading, setLoading] = useState(false);
   const router = useRouter();
+  const { T, night } = useRootineTheme();
+  const styles = night ? STYLES.night : STYLES.day;
 
   async function handleAuth() {
     // 1. Validação inicial para evitar chamadas desnecessárias à API
@@ -152,9 +162,15 @@ export default function AuthScreen() {
       behavior={Platform.OS === "ios" ? "padding" : "height"}
       style={styles.container}
     >
+      <SceneBackdrop night={night} />
       <ScrollView contentContainerStyle={styles.scrollContent}>
         <View style={styles.header}>
-          <Text style={styles.logo}>🌱 Rootine</Text>
+          <View style={styles.eyebrowRow}>
+            <View style={styles.eyebrowRule} />
+            <Text style={styles.eyebrow}>Habitat pessoal</Text>
+            <View style={styles.eyebrowRule} />
+          </View>
+          <Text style={styles.logo}>Rootine</Text>
           <Text style={styles.subtitle}>
             {isSignUp
               ? "Junte-se à jornada sustentável"
@@ -171,7 +187,7 @@ export default function AuthScreen() {
             <TextInput
               placeholder="Nome Completo"
               style={styles.input}
-              placeholderTextColor="#999"
+              placeholderTextColor={T.placeholder}
               onChangeText={setFullName}
               autoCorrect={false}
             />
@@ -180,7 +196,7 @@ export default function AuthScreen() {
           <TextInput
             placeholder="E-mail"
             style={styles.input}
-            placeholderTextColor="#999"
+            placeholderTextColor={T.placeholder}
             autoCapitalize="none"
             keyboardType="email-address"
             onChangeText={setEmail}
@@ -190,7 +206,7 @@ export default function AuthScreen() {
           <TextInput
             placeholder="Senha"
             style={styles.input}
-            placeholderTextColor="#999"
+            placeholderTextColor={T.placeholder}
             secureTextEntry
             onChangeText={setPassword}
           />
@@ -201,7 +217,7 @@ export default function AuthScreen() {
             disabled={loading}
           >
             {loading ? (
-              <ActivityIndicator color="#FFF" />
+              <ActivityIndicator color={T.onMoss} />
             ) : (
               <Text style={styles.buttonText}>
                 {isSignUp ? "Cadastrar" : "Entrar"}
@@ -225,40 +241,72 @@ export default function AuthScreen() {
   );
 }
 
-const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F0F4F8" },
-  scrollContent: { flexGrow: 1, justifyContent: "center", padding: 25 },
-  header: { alignItems: "center", marginBottom: 40 },
-  logo: { fontSize: 32, fontWeight: "bold", color: "#1B5E20" },
-  subtitle: { fontSize: 14, color: "#666", marginTop: 5 },
-  form: {
-    backgroundColor: "#FFF",
-    padding: 25,
-    borderRadius: 20,
-    elevation: 4,
-    shadowColor: "#000",
-    shadowOpacity: 0.1,
-    shadowRadius: 10,
-  },
-  label: { fontSize: 20, fontWeight: "bold", color: "#333", marginBottom: 20 },
-  input: {
-    backgroundColor: "#F9F9F9",
-    padding: 15,
-    borderRadius: 12,
-    marginBottom: 15,
-    borderWidth: 1,
-    borderColor: "#EEE",
-    color: "#333",
-  },
-  button: {
-    backgroundColor: "#4CAF50",
-    padding: 18,
-    borderRadius: 12,
-    alignItems: "center",
-    marginTop: 10,
-  },
-  buttonDisabled: { backgroundColor: "#A5D6A7" },
-  buttonText: { color: "#FFF", fontWeight: "bold", fontSize: 16 },
-  switchButton: { marginTop: 25, alignItems: "center" },
-  switchText: { color: "#4CAF50", fontWeight: "600", fontSize: 14 },
-});
+const makeStyles = (T: RootineTheme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: T.bg },
+    scrollContent: { flexGrow: 1, justifyContent: "center", padding: 25 },
+    header: { alignItems: "center", marginBottom: 36 },
+    eyebrowRow: { flexDirection: "row", alignItems: "center", gap: 10 },
+    eyebrowRule: { width: 26, height: 1, backgroundColor: T.rule },
+    eyebrow: {
+      fontSize: 11,
+      color: T.accent,
+      fontWeight: "700",
+      letterSpacing: 3,
+      textTransform: "uppercase",
+    },
+    logo: {
+      fontFamily: Fonts.serif,
+      fontSize: 40,
+      fontWeight: "600",
+      color: T.ink,
+      marginTop: 12,
+      letterSpacing: 0.4,
+    },
+    subtitle: { fontSize: 14.5, color: T.inkSoft, marginTop: 8 },
+    form: {
+      backgroundColor: T.card,
+      padding: 26,
+      borderRadius: 28,
+      borderWidth: 1,
+      borderColor: T.cardBorder,
+      width: "100%",
+      maxWidth: 460,
+      alignSelf: "center",
+      ...softShadow(T),
+    },
+    label: {
+      fontFamily: Fonts.serif,
+      fontSize: 22,
+      fontWeight: "600",
+      color: T.ink,
+      marginBottom: 20,
+      letterSpacing: 0.2,
+    },
+    input: {
+      backgroundColor: T.inputBg,
+      padding: 15,
+      borderRadius: 15,
+      marginBottom: 14,
+      borderWidth: 1,
+      borderColor: T.inputBorder,
+      color: T.ink,
+    },
+    button: {
+      backgroundColor: T.moss,
+      padding: 17,
+      borderRadius: 16,
+      alignItems: "center",
+      marginTop: 10,
+      ...softShadow(T),
+    },
+    buttonDisabled: { opacity: 0.6 },
+    buttonText: { color: T.onMoss, fontWeight: "700", fontSize: 16, letterSpacing: 0.4 },
+    switchButton: { marginTop: 22, alignItems: "center" },
+    switchText: { color: T.accent, fontWeight: "600", fontSize: 14 },
+  });
+
+const STYLES = {
+  day: makeStyles(ROOTINE_THEMES.day),
+  night: makeStyles(ROOTINE_THEMES.night),
+};
