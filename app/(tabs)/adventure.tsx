@@ -1,5 +1,6 @@
 import { AppHeader } from "@/components/AppHeader";
 import MissionCard from "@/components/MissionCard";
+import { ProgressBar } from "@/components/ProgressBar";
 import { RootineBackground } from "@/components/RootineBackground";
 import { RootineTheme } from "@/constants/rootine-theme";
 import { useRootineTheme } from "@/hooks/useRootineTheme";
@@ -15,6 +16,13 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
+
+type MissionType = "daily" | "specialized";
+
+const GENERATION_ESTIMATE_MS: Record<MissionType, number> = {
+  daily: 32000,
+  specialized: 45000,
+};
 
 export default function AdventureScreen() {
   const {
@@ -32,6 +40,9 @@ export default function AdventureScreen() {
   const { theme } = useRootineTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
   const [userId, setUserId] = useState<string | null>(null);
+  const [generatingMissionType, setGeneratingMissionType] = useState<MissionType | null>(null);
+  const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
+  const [generationProgress, setGenerationProgress] = useState(0);
 
   const loadMissions = useCallback(async () => {
     const {
@@ -67,6 +78,24 @@ export default function AdventureScreen() {
     return () => clearTimeout(timeoutId);
   }, [clearLastNotice, lastNotice]);
 
+  useEffect(() => {
+    if (!generatingMissionType || !generationStartedAt) {
+      setGenerationProgress(0);
+      return undefined;
+    }
+
+    const estimateMs = GENERATION_ESTIMATE_MS[generatingMissionType];
+    const updateProgress = () => {
+      const elapsed = Date.now() - generationStartedAt;
+      const easedProgress = 1 - Math.exp(-elapsed / (estimateMs * 0.56));
+      setGenerationProgress(Math.min(0.94, Math.max(0.06, easedProgress)));
+    };
+
+    updateProgress();
+    const intervalId = setInterval(updateProgress, 350);
+    return () => clearInterval(intervalId);
+  }, [generatingMissionType, generationStartedAt]);
+
   const dailyMissions = useMemo(
     () => missions.filter((mission) => (mission.mission_type || "daily") === "daily"),
     [missions],
@@ -76,20 +105,70 @@ export default function AdventureScreen() {
     [missions],
   );
 
-  const handleGenerate = async (missionType: "daily" | "specialized") => {
+  const generationEstimateMs = generatingMissionType
+    ? GENERATION_ESTIMATE_MS[generatingMissionType]
+    : GENERATION_ESTIMATE_MS.daily;
+  const generationElapsedMs = generationStartedAt ? Date.now() - generationStartedAt : 0;
+  const generationRemainingSeconds = Math.max(
+    1,
+    Math.ceil((generationEstimateMs - generationElapsedMs) / 1000),
+  );
+  const generationOverEstimate = generationElapsedMs > generationEstimateMs;
+  const generationPercent = Math.round(generationProgress * 100);
+  const generationStage = generationProgress < 0.28
+    ? "Lendo contexto do perfil"
+    : generationProgress < 0.58
+      ? "Selecionando blueprints seguros"
+      : generationProgress < 0.84
+        ? "Compondo uma missão concreta"
+        : "Validando impacto e segurança";
+  const generationProgressPanel = generatingMissionType ? (
+    <View style={styles.generationPanel}>
+      <View style={styles.generationHeader}>
+        <View>
+          <Text style={styles.generationTitle}>
+            Gerando missão {generatingMissionType === "daily" ? "diária" : "semanal"}
+          </Text>
+          <Text style={styles.generationStage}>{generationStage}</Text>
+        </View>
+        <Text style={styles.generationPercent}>{generationPercent}%</Text>
+      </View>
+      <ProgressBar progress={generationProgress} />
+      <Text style={styles.generationHint}>
+        {generationOverEstimate
+          ? "A IA está demorando um pouco mais; a geração continua em andamento."
+          : `Cerca de ${generationRemainingSeconds}s restantes se a IA responder no tempo esperado.`}
+      </Text>
+    </View>
+  ) : null;
+
+  const handleGenerate = async (missionType: MissionType) => {
     if (!userId) return;
     console.log("[TRILHA] Solicitando geração de missão:", missionType);
-    await generateMissions(userId, missionType);
+    setGeneratingMissionType(missionType);
+    setGenerationStartedAt(Date.now());
+    setGenerationProgress(0.06);
+    try {
+      await generateMissions(userId, missionType);
+    } finally {
+      setGenerationProgress(1);
+      setGeneratingMissionType(null);
+      setGenerationStartedAt(null);
+    }
   };
 
   if (loading && missions.length === 0) {
     return (
       <View style={styles.centered}>
         <RootineBackground variant="trail" />
-        <ActivityIndicator size="large" color={theme.colors.primary} />
-        <Text style={styles.loadingText}>
-          A Trilha está compondo sua próxima missão...
-        </Text>
+        {generationProgressPanel ?? (
+          <>
+            <ActivityIndicator size="large" color={theme.colors.primary} />
+            <Text style={styles.loadingText}>
+              A Trilha está compondo sua próxima missão...
+            </Text>
+          </>
+        )}
       </View>
     );
   }
@@ -126,6 +205,8 @@ export default function AdventureScreen() {
           </Text>
         </TouchableOpacity>
       </View>
+
+      {generationProgressPanel}
 
       <FlatList
         data={missions}
@@ -261,6 +342,46 @@ const createStyles = (theme: RootineTheme) =>
     specializedActionText: {
       color: theme.colors.accentStrong,
       fontWeight: "800",
+    },
+    generationPanel: {
+      alignSelf: "stretch",
+      maxWidth: 460,
+      marginHorizontal: 20,
+      marginTop: 8,
+      marginBottom: 6,
+      backgroundColor: theme.colors.transparentSurface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 14,
+      gap: 10,
+    },
+    generationHeader: {
+      flexDirection: "row",
+      alignItems: "flex-start",
+      justifyContent: "space-between",
+      gap: 14,
+    },
+    generationTitle: {
+      color: theme.colors.text,
+      fontWeight: "800",
+      fontSize: 14,
+    },
+    generationStage: {
+      color: theme.colors.textMuted,
+      fontWeight: "700",
+      marginTop: 3,
+      fontSize: 12,
+    },
+    generationPercent: {
+      color: theme.colors.primaryStrong,
+      fontWeight: "800",
+      fontSize: 18,
+    },
+    generationHint: {
+      color: theme.colors.textMuted,
+      fontSize: 12,
+      lineHeight: 17,
     },
     sectionSummary: {
       flexDirection: "row",

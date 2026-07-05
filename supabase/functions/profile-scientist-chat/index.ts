@@ -25,22 +25,32 @@ function numberValue(value: unknown, fallback = 0) {
 
 function hasAiKey() {
   return Boolean(
-    Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY") ?? Deno.env.get("GROQ_API_KEY"),
+    Deno.env.get("OPENAI_API_KEY") ??
+      Deno.env.get("OPEN_AI_KEY") ??
+      Deno.env.get("GEMINI_API_KEY") ??
+      Deno.env.get("GROQ_API_KEY"),
   );
 }
 
 function aiRuntimeSummary() {
-  if (Deno.env.get("GROQ_API_KEY")) {
-    return {
-      ai_provider: "groq",
-      ai_model: Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile",
-    };
-  }
-
   if (Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY")) {
     return {
       ai_provider: "openai",
       ai_model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini",
+    };
+  }
+
+  if (Deno.env.get("GEMINI_API_KEY")) {
+    return {
+      ai_provider: "gemini",
+      ai_model: Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash",
+    };
+  }
+
+  if (Deno.env.get("GROQ_API_KEY")) {
+    return {
+      ai_provider: "groq",
+      ai_model: Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile",
     };
   }
 

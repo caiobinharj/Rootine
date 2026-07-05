@@ -71,6 +71,26 @@ const FACT_TYPE_LABELS: Record<string, string> = {
   risk: "Cuidado de segurança",
 };
 
+const SIGNAL_LABELS: Record<string, string> = {
+  has_bucket: "balde disponível",
+  has_kitchen_access: "acesso à cozinha",
+  uses_public_transport: "uso possível de transporte público",
+  recycling_inconsistent: "separação de resíduos ainda irregular",
+  small_changes: "preferência por mudanças pequenas",
+  money_low: "orçamento mais apertado",
+  time_low: "pouco tempo livre",
+  free_time_window: "janela de tempo informada",
+  water_control: "controle sobre uso de água",
+  energy_control: "controle sobre uso de energia",
+  kitchen_access: "acesso à cozinha",
+  primary_mobility: "forma principal de deslocamento",
+  financial_friction: "limite de orçamento",
+  dietary_context: "contexto alimentar",
+  safety_boundary: "limite de segurança",
+  sustainability_experience: "experiência com sustentabilidade",
+  personal_goal: "objetivo pessoal",
+};
+
 const FACT_ACTION_HELP = {
   FACT_HIDDEN: "Ocultar tira este fato da sua visualização. Ele continua registrado como histórico para auditoria.",
   FACT_TYPE_REPORTED: "Tipo incorreto avisa que o app classificou mal o fato, por exemplo chamou de hábito algo que era limitação.",
@@ -187,14 +207,41 @@ function calculateStreak(days: Set<string>) {
 
 function factLabel(fact: any) {
   const value = fact?.value && typeof fact.value === "object" ? fact.value : {};
-  return value.label || value.signal_key || value.summary || fact.fact_key;
+  if (typeof value.summary === "string" && value.summary.trim()) return value.summary.trim();
+
+  const direct = [value.label, value.signal_key]
+    .find((item) => typeof item === "string" && item.trim().length > 0);
+  return humanizeToken(direct || fact.fact_key);
 }
 
 function humanizeToken(value: unknown) {
-  return String(value ?? "")
+  const text = String(value ?? "").trim();
+  if (!text) return "aprendizado do perfil";
+
+  const normalized = text
     .replace(/^trail\.mission\./, "")
+    .replace(/^adventure\.flashcard\./, "")
+    .replace(/^adventure\.quiz\./, "")
     .replace(/^adventure\./, "")
-    .replace(/[._-]+/g, " ")
+    .replace(/^onboarding\./, "")
+    .replace(/^feedback\./, "")
+    .replace(/^cold_start\./, "")
+    .replace(/^(water|energy|waste|transport|food|consumption)\./, "")
+    .replace(/^(habit|capability|constraint|preference|interest|deficit|context|goal|risk)\./, "");
+  const signalKey = normalized.split(".").pop()?.replace(/[^a-z0-9_ -]/gi, " ").trim() ?? "";
+  const mapped = SIGNAL_LABELS[signalKey] ?? SIGNAL_LABELS[normalized.replace(/[.\s-]+/g, "_")];
+  if (mapped) return mapped;
+
+  return signalKey
+    .replace(/_/g, " ")
+    .replace(/\bhas\b/gi, "tem")
+    .replace(/\bbucket\b/gi, "balde")
+    .replace(/\bkitchen\b/gi, "cozinha")
+    .replace(/\bpublic transport\b/gi, "transporte público")
+    .replace(/\brecycling\b/gi, "reciclagem")
+    .replace(/\btime\b/gi, "tempo")
+    .replace(/\bmoney\b/gi, "orçamento")
+    .replace(/\bsmall changes\b/gi, "mudanças pequenas")
     .replace(/\b\w/g, (letter) => letter.toUpperCase())
     .trim();
 }
@@ -218,17 +265,30 @@ function factConfidenceLabel(confidence: unknown) {
 
 function factSentence(fact: any) {
   const value = fact?.value && typeof fact.value === "object" ? fact.value : {};
-  const raw = factLabel(fact);
-  const readable = raw && raw !== fact.fact_key ? humanizeToken(raw) : humanizeToken(fact.fact_key);
+  const readable = factLabel(fact);
   const type = String(fact.fact_type ?? "");
+  const category = categoryLabel(fact.category).toLowerCase();
+
+  if (String(fact.fact_key ?? "").startsWith("cold_start.")) {
+    return "O app ainda tem poucos dados sobre você, então começa com missões pequenas e observáveis.";
+  }
+
+  if (String(fact.fact_key ?? "").startsWith("trail.mission.") || value.source === "mission_action") {
+    const action = String(value.action ?? "");
+    if (action === "completed") return `Você concluiu uma missão de ${category}; isso ajuda o app a calibrar próximas ações.`;
+    if (action === "refused") return `Você recusou uma missão de ${category}; isso reduz a prioridade de propostas parecidas.`;
+    if (action === "failed") return `Uma missão de ${category} ficou difícil de concluir; o app deve reduzir esforço ou dificuldade antes de repetir.`;
+    return `Seu histórico recente em ${category} ajuda a calibrar novas missões.`;
+  }
 
   if (typeof value.summary === "string" && value.summary.trim()) return value.summary.trim();
-  if (type === "habit") return `Você demonstrou este hábito: ${readable}.`;
-  if (type === "capability") return `O app acredita que você consegue fazer algo relacionado a: ${readable}.`;
-  if (type === "constraint") return `Há uma limitação que as missões devem respeitar: ${readable}.`;
-  if (type === "preference") return `Você parece preferir algo relacionado a: ${readable}.`;
-  if (type === "deficit") return `Este é um ponto em que o app pode propor aprendizado: ${readable}.`;
-  if (type === "risk") return `Este é um cuidado de segurança identificado: ${readable}.`;
+  if (type === "habit") return `Você demonstrou um hábito relacionado a ${readable}.`;
+  if (type === "capability") return `O app identificou uma condição favorável: ${readable}.`;
+  if (type === "constraint") return `As missões devem respeitar este limite: ${readable}.`;
+  if (type === "preference") return `Você parece preferir algo relacionado a ${readable}.`;
+  if (type === "deficit") return `Este é um ponto para praticar ou aprender em ${category}.`;
+  if (type === "risk") return `Este cuidado de segurança deve ser respeitado: ${readable}.`;
+  if (type === "goal") return `Este objetivo ajuda a orientar missões de ${category}: ${readable}.`;
   return `Aprendizado observado: ${readable}.`;
 }
 
@@ -567,7 +627,7 @@ export default function ProfileScreen() {
           <ImpactBlock title="Mês" totals={impactPeriods.month} />
           <ImpactBlock title="Total" totals={impactPeriods.total} />
           <Text style={styles.formulaText}>
-            Impacto estimado por modelos versionados em `impact_ledger`; use como intervalo aproximado, não medição exata.
+            Impacto estimado por modelos versionados; use como intervalo aproximado, não medição exata.
           </Text>
         </View>
       )}

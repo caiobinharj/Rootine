@@ -14,8 +14,8 @@ const RECENT_DAYS = 14;
 const HARD_REPEAT_DAYS = 3;
 const HARD_REPEAT_MISSION_LIMIT = 12;
 const MAX_ACTIVE_MISSIONS = 4;
-const MAX_AI_BLUEPRINTS = 6;
-const MAX_AI_CANDIDATES = 3;
+const MAX_AI_BLUEPRINTS = 8;
+const MAX_AI_CANDIDATES = 2;
 
 const COST_ORDER = ["free", "low", "medium", "high"] as const;
 const XP_REWARD_BY_DIFFICULTY: Record<number, number> = {
@@ -84,6 +84,45 @@ interface RankedPattern {
   usedFacts: ProfileFact[];
   rejectedReasons: string[];
 }
+
+interface OutcomeBucket {
+  attempts: number;
+  completed: number;
+  refused: number;
+  failed: number;
+}
+
+interface OutcomeStats {
+  byPattern: Record<string, OutcomeBucket>;
+  byAction: Record<string, OutcomeBucket>;
+  byCategory: Record<string, OutcomeBucket>;
+}
+
+const CATEGORY_LABELS: Record<string, string> = {
+  water: "água",
+  energy: "energia",
+  waste: "resíduos",
+  transport: "transporte",
+  food: "alimentação",
+  consumption: "consumo",
+};
+
+const SIGNAL_LABELS: Record<string, string> = {
+  has_bucket: "balde disponível",
+  has_kitchen_access: "acesso à cozinha",
+  uses_public_transport: "uso possível de transporte público",
+  recycling_inconsistent: "separação de resíduos ainda irregular",
+  small_changes: "preferência por mudanças pequenas",
+  money_low: "orçamento mais apertado",
+  time_low: "pouco tempo livre",
+  free_time_window: "janela de tempo informada",
+  water_control: "controle sobre uso de água",
+  energy_control: "controle sobre uso de energia",
+  primary_mobility: "forma principal de deslocamento",
+  financial_friction: "limite de orçamento",
+  dietary_context: "contexto alimentar",
+  safety_boundary: "limite de segurança",
+};
 
 function isMissionType(value: unknown): value is MissionType {
   return value === "daily" || value === "specialized";
@@ -216,16 +255,195 @@ function maxDifficultyFromProfile(
   if (level >= 9 && missionType === "specialized") maxDifficulty = 5;
 
   if (missionType === "specialized") maxDifficulty += 1;
-  if (timeBudget <= 5 || finance === "high") maxDifficulty = Math.min(maxDifficulty, 2);
+  if (timeBudget <= 5) maxDifficulty = Math.min(maxDifficulty, 2);
+  if (finance === "high") {
+    maxDifficulty = Math.min(maxDifficulty, missionType === "specialized" ? 4 : 3);
+  }
 
   return clamp(maxDifficulty, 1, 5);
 }
 
 function factLabel(fact: ProfileFact) {
   const value = asObject(fact.value);
-  if (typeof value.label === "string") return value.label;
-  if (typeof value.signal_key === "string") return value.signal_key;
-  return fact.fact_key;
+  const directLabel = [value.label, value.summary, value.signal_key]
+    .find((item) => typeof item === "string" && item.trim().length > 0);
+  const candidate = typeof directLabel === "string" ? directLabel : fact.fact_key;
+  const readable = humanizeInternalToken(candidate);
+
+  if (fact.fact_key.startsWith("cold_start.")) {
+    return "informações iniciais do perfil";
+  }
+
+  if (isMissionActionFact(fact)) {
+    const action = typeof value.action === "string" ? value.action : "";
+    const category = CATEGORY_LABELS[String(fact.category ?? "")] ?? "sustentabilidade";
+    if (action === "completed") return `histórico de missão concluída em ${category}`;
+    if (action === "refused") return `histórico de missão recusada em ${category}`;
+    if (action === "failed") return `histórico de missão difícil em ${category}`;
+    return `histórico recente em ${category}`;
+  }
+
+  return readable || categoryFactFallback(fact);
+}
+
+function isMissionActionFact(fact: ProfileFact) {
+  const value = asObject(fact.value);
+  return fact.fact_key.startsWith("trail.mission.") || value.source === "mission_action";
+}
+
+function containsInternalIdentifier(value: string) {
+  return /\b(?:water|energy|waste|transport|food|consumption|onboarding|adventure|trail|cold_start|feedback)\.[a-z0-9_.-]+\b/i
+    .test(value);
+}
+
+function humanizeInternalToken(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  if (!/[._]/.test(text) && /\s/u.test(text)) {
+    return text.replace(/\s+/g, " ").trim();
+  }
+
+  const normalized = text
+    .replace(/^trail\.mission\./, "")
+    .replace(/^adventure\.flashcard\./, "")
+    .replace(/^adventure\.quiz\./, "")
+    .replace(/^onboarding\./, "")
+    .replace(/^feedback\./, "")
+    .replace(/^cold_start\./, "")
+    .replace(/^(water|energy|waste|transport|food|consumption)\./, "")
+    .replace(/^(habit|capability|constraint|preference|interest|deficit|context|goal|risk)\./, "");
+  const signalKey = normalized.split(".").pop()?.replace(/[^\p{L}\p{N}_ -]/gu, " ").trim() ?? "";
+  const mapped = SIGNAL_LABELS[signalKey] ?? SIGNAL_LABELS[normalized.replace(/[.\s-]+/g, "_")];
+  if (mapped) return mapped;
+
+  return signalKey
+    .replace(/_/g, " ")
+    .replace(/\bhas\b/gi, "tem")
+    .replace(/\bbucket\b/gi, "balde")
+    .replace(/\bkitchen\b/gi, "cozinha")
+    .replace(/\bpublic transport\b/gi, "transporte público")
+    .replace(/\brecycling\b/gi, "reciclagem")
+    .replace(/\btime\b/gi, "tempo")
+    .replace(/\bmoney\b/gi, "orçamento")
+    .replace(/\bsmall changes\b/gi, "mudanças pequenas")
+    .trim();
+}
+
+function categoryFactFallback(fact: ProfileFact) {
+  const category = CATEGORY_LABELS[String(fact.category ?? "")] ?? "sustentabilidade";
+  switch (fact.fact_type) {
+    case "capability":
+      return `uma condição favorável em ${category}`;
+    case "constraint":
+      return `um limite a respeitar em ${category}`;
+    case "preference":
+      return `uma preferência em ${category}`;
+    case "deficit":
+      return `um ponto de aprendizado em ${category}`;
+    case "habit":
+      return `um hábito observado em ${category}`;
+    case "goal":
+      return `um objetivo em ${category}`;
+    default:
+      return `um aprendizado do perfil em ${category}`;
+  }
+}
+
+function factReasonPhrase(fact: ProfileFact) {
+  const label = factLabel(fact).toLowerCase();
+  const category = CATEGORY_LABELS[String(fact.category ?? "")] ?? "sustentabilidade";
+
+  if (fact.fact_key.startsWith("cold_start.")) {
+    return "ainda há poucos dados no perfil, então a ação começa pequena e observável";
+  }
+  if (isMissionActionFact(fact)) {
+    return `o histórico recente em ${category} ajudou a ajustar a intensidade`;
+  }
+
+  switch (fact.fact_type) {
+    case "capability":
+      return `aproveita ${label}`;
+    case "constraint":
+      return `respeita ${label}`;
+    case "preference":
+      return `combina com ${label}`;
+    case "deficit":
+      return `trabalha um ponto de aprendizado em ${category}`;
+    case "habit":
+      return `parte de um hábito já observado em ${category}`;
+    case "goal":
+      return `apoia seu objetivo em ${category}`;
+    default:
+      return `usa um aprendizado recente do seu perfil`;
+  }
+}
+
+function sanitizePublicText(value: string, fallback: string) {
+  if (containsInternalIdentifier(value)) return fallback;
+  const cleaned = value
+    .replace(
+      /\b(?:water|energy|waste|transport|food|consumption|onboarding|adventure|trail|cold_start|feedback)\.[a-z0-9_.-]+\b/gi,
+      "um aprendizado do perfil",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!cleaned || containsInternalIdentifier(cleaned)) return fallback;
+  return cleaned;
+}
+
+function joinNatural(items: string[]) {
+  const uniqueItems = [...new Set(items.map((item) => item.trim()).filter(Boolean))];
+  if (uniqueItems.length <= 1) return uniqueItems[0] ?? "";
+  if (uniqueItems.length === 2) return `${uniqueItems[0]} e ${uniqueItems[1]}`;
+  return `${uniqueItems.slice(0, -1).join(", ")} e ${uniqueItems[uniqueItems.length - 1]}`;
+}
+
+function missionActionScoreForPattern(pattern: PatternRow, fact: ProfileFact) {
+  if (!isMissionActionFact(fact)) return null;
+
+  const value = asObject(fact.value);
+  const confidence = clamp(numberValue(fact.confidence, 0.5), 0.1, 1);
+  const patternKey = typeof value.pattern_key === "string" ? value.pattern_key : "";
+  const action = typeof value.action === "string" ? value.action : "";
+  const priorityDelta = numberValue(value.priority_delta, 0);
+  const samePattern = patternKey === pattern.key ||
+    fact.fact_key.startsWith(`trail.mission.${pattern.key}.`);
+  const sameCategory = fact.category === pattern.category;
+  let score = 0;
+
+  if (samePattern) {
+    score += priorityDelta * 70 * confidence;
+    if (action === "completed") score += 8 * confidence;
+    if (action === "refused") score -= 18 * confidence;
+    if (action === "failed") score -= 14 * confidence;
+  } else if (sameCategory) {
+    if (action === "completed") score += 1.5 * confidence;
+    if (action === "refused") score -= 2 * confidence;
+    if (action === "failed") score -= 3 * confidence;
+  }
+
+  const priorDifficulty = numberValue(value.difficulty, NaN);
+  if (
+    sameCategory &&
+    action === "failed" &&
+    Number.isFinite(priorDifficulty) &&
+    pattern.difficulty_min >= priorDifficulty
+  ) {
+    score -= 3 * confidence;
+  }
+
+  return score;
+}
+
+function factScoreForPattern(pattern: PatternRow, fact: ProfileFact) {
+  const missionActionScore = missionActionScoreForPattern(pattern, fact);
+  if (missionActionScore !== null) return missionActionScore;
+
+  if (fact.fact_type === "deficit") return 5;
+  if (fact.fact_type === "capability") return 3;
+  if (fact.fact_type === "preference" || fact.fact_type === "goal") return 2;
+  return 0;
 }
 
 function missionTextSimilarity(left: string, right: string) {
@@ -247,8 +465,37 @@ function missionReferenceTimeMs(mission: any) {
   return Number.isFinite(time) ? time : 0;
 }
 
-function buildRepeatBlockMissions(activeMissions: any[], recentMissions: any[]) {
-  const hardSinceMs = Date.now() - HARD_REPEAT_DAYS * 24 * 60 * 60 * 1000;
+function patternCooldownDays(pattern: PatternRow | null | undefined) {
+  if (!pattern) return HARD_REPEAT_DAYS;
+  const metadata = asObject(pattern.metadata);
+  const configuredCooldown = numberValue(metadata.cooldown_days, NaN);
+  if (Number.isFinite(configuredCooldown)) return clamp(Math.round(configuredCooldown), 0, RECENT_DAYS);
+  if (pattern.recurrence_allowed) return 1;
+  return clamp(pattern.difficulty_min + 1, 2, 10);
+}
+
+function buildPatternLookups(patterns: PatternRow[]) {
+  return {
+    byKey: new Map(patterns.map((pattern) => [pattern.key, pattern])),
+    byAction: new Map(patterns.map((pattern) => [pattern.action_fingerprint, pattern])),
+  };
+}
+
+function patternForMission(
+  mission: any,
+  lookups: ReturnType<typeof buildPatternLookups>,
+) {
+  const patternKey = typeof mission?.pattern_key === "string" ? mission.pattern_key : "";
+  const actionFingerprint = typeof mission?.action_fingerprint === "string" ? mission.action_fingerprint : "";
+  return lookups.byKey.get(patternKey) ?? lookups.byAction.get(actionFingerprint) ?? null;
+}
+
+function buildRepeatBlockMissions(
+  activeMissions: any[],
+  recentMissions: any[],
+  patterns: PatternRow[],
+) {
+  const lookups = buildPatternLookups(patterns);
   const blocked: any[] = [];
   const seen = new Set<string>();
 
@@ -263,12 +510,68 @@ function buildRepeatBlockMissions(activeMissions: any[], recentMissions: any[]) 
   activeMissions.forEach(addMission);
   recentMissions
     .filter((mission) => String(mission?.status ?? "") !== "active")
-    .filter((mission) => missionReferenceTimeMs(mission) >= hardSinceMs)
+    .filter((mission) => {
+      const pattern = patternForMission(mission, lookups);
+      const cooldownDays = patternCooldownDays(pattern);
+      const cooldownSinceMs = Date.now() - cooldownDays * 24 * 60 * 60 * 1000;
+      return missionReferenceTimeMs(mission) >= cooldownSinceMs;
+    })
     .sort((left, right) => missionReferenceTimeMs(right) - missionReferenceTimeMs(left))
-    .slice(0, HARD_REPEAT_MISSION_LIMIT)
     .forEach(addMission);
 
   return blocked;
+}
+
+function emptyOutcomeBucket(): OutcomeBucket {
+  return { attempts: 0, completed: 0, refused: 0, failed: 0 };
+}
+
+function addOutcome(bucket: OutcomeBucket, status: string) {
+  if (!["completed", "refused", "failed"].includes(status)) return;
+  bucket.attempts += 1;
+  if (status === "completed") bucket.completed += 1;
+  if (status === "refused") bucket.refused += 1;
+  if (status === "failed") bucket.failed += 1;
+}
+
+function buildOutcomeStats(recentMissions: any[]): OutcomeStats {
+  const stats: OutcomeStats = { byPattern: {}, byAction: {}, byCategory: {} };
+
+  for (const mission of recentMissions) {
+    const status = String(mission?.status ?? "");
+    const patternKey = typeof mission?.pattern_key === "string" ? mission.pattern_key : "";
+    const actionFingerprint = typeof mission?.action_fingerprint === "string" ? mission.action_fingerprint : "";
+    const category = typeof mission?.category === "string" ? mission.category : "";
+
+    if (patternKey) addOutcome(stats.byPattern[patternKey] ??= emptyOutcomeBucket(), status);
+    if (actionFingerprint) addOutcome(stats.byAction[actionFingerprint] ??= emptyOutcomeBucket(), status);
+    if (category) addOutcome(stats.byCategory[category] ??= emptyOutcomeBucket(), status);
+  }
+
+  return stats;
+}
+
+function outcomeScoreForPattern(pattern: PatternRow, outcomeStats: OutcomeStats) {
+  const patternBucket = outcomeStats.byPattern[pattern.key] ??
+    outcomeStats.byAction[pattern.action_fingerprint] ??
+    emptyOutcomeBucket();
+  const categoryBucket = outcomeStats.byCategory[pattern.category] ?? emptyOutcomeBucket();
+  let score = 0;
+
+  score += patternBucket.completed * 4;
+  score -= patternBucket.refused * 16;
+  score -= patternBucket.failed * 14;
+
+  if (patternBucket.attempts >= 3) {
+    const completionRate = patternBucket.completed / patternBucket.attempts;
+    if (completionRate < 0.45) score -= 12;
+  }
+
+  score += categoryBucket.completed * 0.35;
+  score -= categoryBucket.refused * 1.8;
+  score -= categoryBucket.failed * 2.4;
+
+  return score;
 }
 
 function rankPattern(input: {
@@ -278,12 +581,14 @@ function rankPattern(input: {
   repeatBlockMissions: any[];
   recentCategoryCounts: Record<string, number>;
   activeCategoryCounts: Record<string, number>;
+  outcomeStats: OutcomeStats;
   repeatBlockPatternKeys: Set<string>;
   repeatBlockActionFingerprints: Set<string>;
   missionType: MissionType;
   maxDifficulty: number;
   maxCost: string;
   timeBudget: number;
+  userLevel: number;
 }) {
   const {
     pattern,
@@ -292,23 +597,28 @@ function rankPattern(input: {
     repeatBlockMissions,
     recentCategoryCounts,
     activeCategoryCounts,
+    outcomeStats,
     repeatBlockPatternKeys,
     repeatBlockActionFingerprints,
     missionType,
     maxDifficulty,
     maxCost,
     timeBudget,
+    userLevel,
   } = input;
   const rejectedReasons: string[] = [];
 
   if (pattern.difficulty_min > maxDifficulty) rejectedReasons.push("difficulty_above_profile");
   if (pattern.effort_minutes_min > timeBudget) rejectedReasons.push("effort_above_profile");
   if (costRank(pattern.cost_level) > costRank(maxCost)) rejectedReasons.push("cost_above_profile");
-  if (!pattern.recurrence_allowed && repeatBlockPatternKeys.has(pattern.key)) {
-    rejectedReasons.push("pattern_repeated_recently");
+  if (userLevel >= 7 && pattern.difficulty_min <= 1 && pattern.effort_minutes_min <= 5) {
+    rejectedReasons.push("pattern_too_trivial_for_experienced_user");
   }
-  if (!pattern.recurrence_allowed && repeatBlockActionFingerprints.has(pattern.action_fingerprint)) {
-    rejectedReasons.push("action_fingerprint_repeated_recently");
+  if (repeatBlockPatternKeys.has(pattern.key)) {
+    rejectedReasons.push("pattern_in_cooldown");
+  }
+  if (repeatBlockActionFingerprints.has(pattern.action_fingerprint)) {
+    rejectedReasons.push("action_fingerprint_in_cooldown");
   }
 
   const activeFactKeys = new Set(facts.map((fact) => fact.fact_key));
@@ -327,11 +637,15 @@ function rankPattern(input: {
       return numberValue(right.confidence, 0) - numberValue(left.confidence, 0);
     });
 
+  const factScores = matchingFacts.map((fact) => factScoreForPattern(pattern, fact));
+  const hasHelpfulContext = matchingFacts.some((fact, index) =>
+    !isMissionActionFact(fact) || factScores[index] > 0
+  );
+
   let score = 0;
-  score += matchingFacts.length > 0 ? 18 : -12;
-  score += matchingFacts.filter((fact) => fact.fact_type === "deficit").length * 5;
-  score += matchingFacts.filter((fact) => fact.fact_type === "capability").length * 3;
-  score += matchingFacts.filter((fact) => fact.fact_type === "preference" || fact.fact_type === "goal").length * 2;
+  score += hasHelpfulContext ? 18 : -12;
+  score += factScores.reduce((total, factScore) => total + factScore, 0);
+  score += outcomeScoreForPattern(pattern, outcomeStats);
 
   const affinities = asObject(profile.affinities);
   score += numberValue(affinities[pattern.category], 0) * 5;
@@ -348,10 +662,18 @@ function rankPattern(input: {
         : 95 + (activeCategoryCount - 3) * 35;
   }
 
+  const experienceTarget = userLevel >= 9
+    ? 5
+    : userLevel >= 7
+      ? 4
+      : userLevel >= 4
+        ? 3
+        : 2;
   const difficultyTarget = missionType === "specialized"
-    ? Math.max(2, Math.min(maxDifficulty, 4))
-    : Math.max(1, Math.min(maxDifficulty, 3));
+    ? Math.max(2, Math.min(maxDifficulty, experienceTarget + 1))
+    : Math.max(1, Math.min(maxDifficulty, experienceTarget));
   score -= Math.abs(pattern.difficulty_min - difficultyTarget) * 2;
+  if (pattern.difficulty_min === difficultyTarget) score += 3;
 
   if (pattern.cost_level === "free") score += 2;
   if (pattern.effort_minutes_max <= timeBudget) score += 2;
@@ -432,6 +754,97 @@ function hasPositiveImpact(impact: Record<string, any>) {
   );
 }
 
+function hasConcreteActionLanguage(value: string) {
+  const text = normalizeText(value);
+  return [
+    "acompanhe",
+    "ajuste",
+    "anote",
+    "avalie",
+    "busque",
+    "calcule",
+    "confira",
+    "considere",
+    "compare",
+    "crie",
+    "defina",
+    "desligue",
+    "dispense",
+    "encaminhe",
+    "escolha",
+    "estime",
+    "evite",
+    "feche",
+    "identifique",
+    "liste",
+    "meca",
+    "monte",
+    "observe",
+    "olhe",
+    "organize",
+    "pegue",
+    "planeje",
+    "prefira",
+    "prepare",
+    "priorize",
+    "procure",
+    "proponha",
+    "reaproveite",
+    "registre",
+    "reduza",
+    "remova",
+    "reuna",
+    "revise",
+    "separe",
+    "substitua",
+    "teste",
+    "troque",
+    "use",
+    "veja",
+    "verifique",
+  ].some((verb) => text.includes(verb));
+}
+
+function hasSustainabilityFollowThrough(value: string) {
+  const text = normalizeText(value);
+  const discoveryTerms = [
+    "abra",
+    "avalie",
+    "confira",
+    "identifique",
+    "liste",
+    "observe",
+    "registre",
+    "revise",
+    "separe",
+    "verifique",
+  ];
+  const isDiscoveryOnlyRisk = discoveryTerms.some((term) => text.includes(term));
+  if (!isDiscoveryOnlyRisk) return true;
+
+  return [
+    "armazene",
+    "consuma",
+    "criterio",
+    "defina",
+    "destino",
+    "doe",
+    "encaminhe",
+    "escolha",
+    "evitar descarte",
+    "guarde",
+    "planeje",
+    "prioridade",
+    "proxima refeicao",
+    "reaproveite",
+    "reduzir descarte",
+    "regra",
+    "repare",
+    "substitua",
+    "use",
+  ].some((term) => text.includes(term));
+}
+
 function validateCandidate(
   candidate: MissionCandidate,
   options: {
@@ -455,7 +868,7 @@ function validateCandidate(
   if (!Number.isFinite(candidate.effort_minutes) || candidate.effort_minutes < 0 || candidate.effort_minutes > 240) {
     errors.push("effort_minutes_invalid");
   }
-  if (!candidate.environmental_goal || !normalizeText(candidate.environmental_goal).match(/reduzir|evitar|economizar|reutilizar|reciclar|separar|consertar|diminuir|desperdicio|emissao|agua|energia|consumo/)) {
+  if (!candidate.environmental_goal || !normalizeText(candidate.environmental_goal).match(/reduzir|evitar|economizar|reutilizar|reaproveitar|reciclar|separar|consertar|reparar|diminuir|desperdicio|emissao|agua|energia|consumo|residuo|descarte|vida util|baixo carbono|prolongar|encaminhar|otimizar|planejar/)) {
     errors.push("environmental_goal_not_positive_or_explicit");
   }
   if (!candidate.used_fact_keys.length) errors.push("used_fact_keys_required");
@@ -473,7 +886,11 @@ function validateCandidate(
     }
   }
 
-  const text = normalizeText(`${candidate.title} ${candidate.description} ${candidate.personalization_reason}`);
+  const publicText = `${candidate.title} ${candidate.description} ${candidate.personalization_reason}`;
+  const text = normalizeText(publicText);
+  if (containsInternalIdentifier(publicText)) {
+    errors.push("public_text_contains_internal_identifier");
+  }
   if (
     text.includes("missao da pequena mudanca") ||
     text.includes("escolha uma acao simples") ||
@@ -486,9 +903,26 @@ function validateCandidate(
     text.includes("registre mentalmente o que funcionou") ||
     text.includes("reserve em cerca de") ||
     text.includes("nao compre nada para concluir") ||
-    text.includes("distribua ou repita a acao")
+    text.includes("distribua ou repita a acao") ||
+    text.includes("ajuste a acao para que") ||
+    text.includes("para que nao depende") ||
+    text.includes("deve ser algo") ||
+    text.includes("como preferir")
   ) {
     errors.push("mission_contains_boilerplate_suffix");
+  }
+
+  if (!hasConcreteActionLanguage(candidate.description)) {
+    errors.push("description_lacks_concrete_action");
+  }
+  if (!hasSustainabilityFollowThrough(candidate.description)) {
+    errors.push("description_lacks_sustainability_follow_through");
+  }
+  if (candidate.mission_type === "daily" && /\b(nesta semana|ao longo da semana|durante a semana)\b/.test(text)) {
+    errors.push("daily_mission_uses_weekly_language");
+  }
+  if (candidate.mission_type === "specialized" && /\b(hoje|agora)\b/.test(text) && !/\b(nesta semana|ao longo da semana|durante a semana)\b/.test(text)) {
+    errors.push("specialized_mission_lacks_weekly_language");
   }
 
   const harmful = [
@@ -499,6 +933,10 @@ function validateCandidate(
     "deixe ligado",
     "jogue fora",
     "banho mais longo",
+    "ignore seguranca",
+    "sem se preocupar com seguranca",
+    "descarte no lixo comum",
+    "misture residuos",
   ];
   if (harmful.some((term) => text.includes(term))) {
     errors.push("mission_increases_consumption_without_justification");
@@ -556,22 +994,22 @@ function buildFallbackCandidate(
       value: { source: "fallback_context" },
       confidence: 0.45,
     } as ProfileFact];
-  const strongestFact = usedFacts[0];
-  const factSummary = factLabel(strongestFact);
   const expectedImpact = impactEstimate(pattern, difficulty);
   const xpReward = XP_REWARD_BY_DIFFICULTY[difficulty] ?? 10;
+  const slotHints = buildPersonalizationSlotHints(pattern, usedFacts, profile, effortMinutes);
+  const description = buildDeterministicDescription(pattern, missionType, slotHints);
+  const personalizationReason = buildPersonalizationReason(pattern, usedFacts, slotHints);
 
   return {
     title: pattern.fallback_title_pt,
-    description: descriptionForMissionType(pattern, missionType),
+    description,
     category: pattern.category,
     environmental_goal: pattern.environmental_goal,
     difficulty,
     effort_minutes: effortMinutes,
     cost_level: pattern.cost_level,
     used_fact_keys: usedFacts.map((fact) => fact.fact_key).slice(0, 4),
-    personalization_reason:
-      `${pattern.fallback_reason_pt} Usei como base o fato "${factSummary}" e respeitei tempo, custo e autonomia do perfil.`,
+    personalization_reason: personalizationReason,
     expected_impact: expectedImpact,
     pattern_key: pattern.key,
     action_fingerprint: pattern.action_fingerprint,
@@ -579,10 +1017,10 @@ function buildFallbackCandidate(
     xp_reward: xpReward,
     ai_justification: {
       category: pattern.category,
-      reason:
-        `${pattern.fallback_reason_pt} A missão veio de um pattern validado e usa fatos reais do perfil.`,
+      reason: personalizationReason,
       mission_type: missionType,
       generated_by: ALGORITHM_VERSION,
+      personalization_slots: pattern.personalization_slots,
     },
   } satisfies MissionCandidate;
 }
@@ -629,7 +1067,10 @@ interface AiCompositionAttempt {
 
 function sanitizeAiText(value: unknown, fallback: string, maxLength: number) {
   if (typeof value !== "string") return fallback;
-  const trimmed = stripGenericMissionBoilerplate(value).replace(/\s+/g, " ").trim();
+  const trimmed = sanitizePublicText(
+    stripGenericMissionBoilerplate(value).replace(/\s+/g, " ").trim(),
+    fallback,
+  );
   if (!trimmed) return fallback;
   return trimmed.slice(0, maxLength);
 }
@@ -652,6 +1093,70 @@ function descriptionForMissionType(pattern: PatternRow, missionType: MissionType
     return `Nesta semana, ${cleanDescription.slice("Hoje, ".length)}`;
   }
   return cleanDescription;
+}
+
+function buildPersonalizationSlotHints(
+  pattern: PatternRow,
+  facts: ProfileFact[],
+  profile: Record<string, unknown>,
+  effortMinutes: number,
+) {
+  const context = asObject(profile.socioeconomic_context);
+  const routine = asObject(context.routine);
+  const slots = new Set(pattern.personalization_slots);
+  const hints: string[] = [];
+  const fact = facts[0];
+
+  if (fact) hints.push(factReasonPhrase(fact));
+  if (slots.has("time_limit")) hints.push(`cabe em até ${effortMinutes} minutos`);
+  if (slots.has("budget_limit") || pattern.cost_level === "free") hints.push("não depende de compra nova");
+  if (slots.has("control_level")) hints.push("fica restrita ao que estiver sob seu controle");
+  if (slots.has("safe_pause") || slots.has("safety_boundary") || slots.has("safety_condition")) {
+    hints.push("mantém segurança e saúde como limite");
+  }
+  if (slots.has("comfort_level")) hints.push("preserva conforto básico");
+  if (slots.has("kitchen_access")) hints.push("respeita o acesso real à cozinha");
+  if (slots.has("diet_boundary")) hints.push("não impõe mudança alimentar incompatível");
+  if (slots.has("collection_access")) hints.push("considera se há destino viável para o resíduo");
+  if (slots.has("available_space") || slots.has("storage_context")) hints.push("usa pouco espaço");
+  if (slots.has("mobility_limit")) hints.push("não ignora mobilidade, clima ou segurança do trajeto");
+  if (slots.has("route_type")) hints.push("atua em um deslocamento concreto");
+  if (slots.has("purchase_context")) hints.push("age antes da decisão de compra");
+  if (slots.has("reuse_option")) hints.push("prioriza reutilizar o que já existe");
+  if (slots.has("delay_window")) hints.push("cria uma pausa antes do consumo automático");
+
+  const freeTime = String(context.time_availability ?? routine.free_time ?? "");
+  if (freeTime === "micro") hints.push("foi mantida bem curta");
+  if (freeTime === "short") hints.push("foi mantida objetiva");
+
+  return [...new Set(hints)].slice(0, 4);
+}
+
+function buildDeterministicDescription(
+  pattern: PatternRow,
+  missionType: MissionType,
+  _slotHints: string[],
+) {
+  const base = descriptionForMissionType(pattern, missionType);
+  return sanitizePublicText(base, base);
+}
+
+function buildPersonalizationReason(
+  pattern: PatternRow,
+  facts: ProfileFact[],
+  slotHints: string[],
+) {
+  const reasonHints = slotHints.length
+    ? slotHints.slice(0, 3)
+    : facts.slice(0, 2).map(factReasonPhrase);
+  const reason = reasonHints.length
+    ? `${pattern.fallback_reason_pt} Ela foi escolhida porque ${joinNatural(reasonHints)}.`
+    : `${pattern.fallback_reason_pt} Ela começa por uma ação concreta, segura e de baixa fricção.`;
+
+  return sanitizePublicText(
+    reason,
+    `${pattern.fallback_reason_pt} Ela começa por uma ação concreta, segura e de baixa fricção.`,
+  );
 }
 
 function buildAiCandidateFromBlueprint(
@@ -699,7 +1204,10 @@ async function composeMissionCandidatesWithAi(
   contextSummary: Record<string, unknown>,
 ) {
   const hasAiKey = Boolean(
-    Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY") ?? Deno.env.get("GROQ_API_KEY"),
+    Deno.env.get("OPENAI_API_KEY") ??
+      Deno.env.get("OPEN_AI_KEY") ??
+      Deno.env.get("GEMINI_API_KEY") ??
+      Deno.env.get("GROQ_API_KEY"),
   );
 
   if (!hasAiKey) {
@@ -707,6 +1215,7 @@ async function composeMissionCandidatesWithAi(
       candidates: [] as MissionCandidate[],
       usedAi: false,
       fallbackReason: "no_ai_key",
+      fallbackDetail: "no_ai_key",
     };
   }
 
@@ -729,6 +1238,7 @@ async function composeMissionCandidatesWithAi(
     fallback_title_pt: rankedPattern.pattern.fallback_title_pt,
     fallback_description_pt: rankedPattern.pattern.fallback_description_pt,
     fallback_reason_pt: rankedPattern.pattern.fallback_reason_pt,
+    deterministic_reason_pt: fallbackCandidate.personalization_reason,
     score: Math.round(rankedPattern.score * 100) / 100,
   }));
 
@@ -741,10 +1251,13 @@ Regras:
 - Não altere categoria, action_fingerprint, objetivo ambiental, dificuldade, custo, tempo, XP, impacto ou facts fora dos recebidos.
 - Use somente used_fact_keys presentes no blueprint escolhido.
 - A descrição deve ser concreta, sustentável, segura, curta e não genérica.
+- A descrição deve fechar o ciclo da ação: contexto ou objeto + ação concreta + destino, decisão, uso, prevenção ou próximo passo sustentável.
+- Não pare em "abrir", "listar", "separar", "observar" ou "identificar"; diga o que a pessoa fará com o item, sobra, rota, resíduo, aparelho ou informação encontrada.
 - Se o blueprint tiver mission_window_days = 7, escreva como missão semanal: algo para distribuir, repetir ou acompanhar ao longo da semana.
 - Não copie nem acrescente rodapés genéricos como "registre mentalmente o que funcionou", "não compre nada para concluir" ou "Distribua ou repita a ação".
 - Evite frases robóticas como "certifique-se de completar em até X minutos".
 - Evite justificativas genéricas como "seu nível de usuário"; cite limites, preferências ou fatos concretos do contexto.
+- Nunca mostre fact_key, pattern_key, action_fingerprint, nomes de tabela ou códigos internos no texto ao usuário.
 - Não invente restrições, dados médicos, custos, acesso doméstico ou fatos novos.
 - Não mande comprar nada caro nem aumentar consumo de água, energia, descarte ou emissões.
 JSON esperado:
@@ -771,9 +1284,12 @@ JSON esperado:
   const fallbackReason = typeof aiResult?._fallback_reason === "string"
     ? aiResult._fallback_reason
     : null;
+  const fallbackDetail = typeof aiResult?._fallback_detail === "string"
+    ? aiResult._fallback_detail
+    : fallbackReason;
 
   if (fallbackReason) {
-    return { candidates: [] as MissionCandidate[], usedAi: false, fallbackReason };
+    return { candidates: [] as MissionCandidate[], usedAi: false, fallbackReason, fallbackDetail };
   }
 
   const rawCandidates = Array.isArray(aiResult?.candidates)
@@ -786,29 +1302,43 @@ JSON esperado:
     .filter((candidate: MissionCandidate | null): candidate is MissionCandidate => Boolean(candidate));
 
   if (!candidates.length) {
-    return { candidates: [] as MissionCandidate[], usedAi: false, fallbackReason: "ai_returned_no_valid_blueprint_candidate" };
+    return {
+      candidates: [] as MissionCandidate[],
+      usedAi: false,
+      fallbackReason: "ai_returned_no_valid_blueprint_candidate",
+      fallbackDetail: "empty_candidate_list",
+    };
   }
 
-  return { candidates, usedAi: true, fallbackReason: null };
+  return { candidates, usedAi: true, fallbackReason: null, fallbackDetail: null };
 }
 
 function aiRuntimeSummary() {
-  const groqKey = Deno.env.get("GROQ_API_KEY");
   const openAiKey = Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY");
-
-  if (groqKey) {
-    return {
-      ai_available: true,
-      ai_provider: "groq",
-      ai_model: Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile",
-    };
-  }
+  const geminiKey = Deno.env.get("GEMINI_API_KEY");
+  const groqKey = Deno.env.get("GROQ_API_KEY");
 
   if (openAiKey) {
     return {
       ai_available: true,
       ai_provider: "openai",
       ai_model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini",
+    };
+  }
+
+  if (geminiKey) {
+    return {
+      ai_available: true,
+      ai_provider: "gemini",
+      ai_model: Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash",
+    };
+  }
+
+  if (groqKey) {
+    return {
+      ai_available: true,
+      ai_provider: "groq",
+      ai_model: Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile",
     };
   }
 
@@ -1007,7 +1537,8 @@ serve(async (req: Request) => {
       }
       return acc;
     }, {});
-    const repeatBlockMissions = buildRepeatBlockMissions(activeMissions ?? [], recentMissions ?? []);
+    const outcomeStats = buildOutcomeStats(recentMissions ?? []);
+    const repeatBlockMissions = buildRepeatBlockMissions(activeMissions ?? [], recentMissions ?? [], typedPatterns);
     const repeatBlockPatternKeys = new Set(
       repeatBlockMissions
         .map((mission: any) => mission.pattern_key)
@@ -1015,6 +1546,17 @@ serve(async (req: Request) => {
     );
     const repeatBlockActionFingerprints = new Set(
       repeatBlockMissions
+        .map((mission: any) => mission.action_fingerprint)
+        .filter((key: unknown): key is string => typeof key === "string" && key.length > 0),
+    );
+    const activeRepeatBlockMissions = activeMissions ?? [];
+    const activeRepeatBlockPatternKeys = new Set(
+      activeRepeatBlockMissions
+        .map((mission: any) => mission.pattern_key)
+        .filter((key: unknown): key is string => typeof key === "string" && key.length > 0),
+    );
+    const activeRepeatBlockActionFingerprints = new Set(
+      activeRepeatBlockMissions
         .map((mission: any) => mission.action_fingerprint)
         .filter((key: unknown): key is string => typeof key === "string" && key.length > 0),
     );
@@ -1028,18 +1570,57 @@ serve(async (req: Request) => {
           repeatBlockMissions,
           recentCategoryCounts,
           activeCategoryCounts,
+          outcomeStats,
           repeatBlockPatternKeys,
           repeatBlockActionFingerprints,
           missionType,
           maxDifficulty,
           maxCost,
           timeBudget,
+          userLevel,
         })
       )
       .sort((left, right) => right.score - left.score);
 
-    const candidatePatternKeys = ranked.slice(0, 12).map((item) => item.pattern.key);
-    const rejectedCandidates: unknown[] = ranked
+    let selectionRanked = ranked;
+    let selectionRepeatBlockMissions = repeatBlockMissions;
+    let selectionRepeatBlockPatternKeys = repeatBlockPatternKeys;
+    let selectionRepeatBlockActionFingerprints = repeatBlockActionFingerprints;
+    let selectionRepeatPolicy = "pattern_metadata_cooldown_days";
+
+    if (!ranked.some((item) => item.rejectedReasons.length === 0)) {
+      const relaxedRanked = typedPatterns
+        .map((pattern) =>
+          rankPattern({
+            pattern,
+            profile,
+            facts,
+            repeatBlockMissions: activeRepeatBlockMissions,
+            recentCategoryCounts,
+            activeCategoryCounts,
+            outcomeStats,
+            repeatBlockPatternKeys: activeRepeatBlockPatternKeys,
+            repeatBlockActionFingerprints: activeRepeatBlockActionFingerprints,
+            missionType,
+            maxDifficulty,
+            maxCost,
+            timeBudget,
+            userLevel,
+          })
+        )
+        .sort((left, right) => right.score - left.score);
+
+      if (relaxedRanked.some((item) => item.rejectedReasons.length === 0)) {
+        selectionRanked = relaxedRanked;
+        selectionRepeatBlockMissions = activeRepeatBlockMissions;
+        selectionRepeatBlockPatternKeys = activeRepeatBlockPatternKeys;
+        selectionRepeatBlockActionFingerprints = activeRepeatBlockActionFingerprints;
+        selectionRepeatPolicy = "active_missions_only_after_cooldown_exhaustion";
+      }
+    }
+
+    const candidatePatternKeys = selectionRanked.slice(0, 12).map((item) => item.pattern.key);
+    const rejectedCandidates: unknown[] = selectionRanked
       .filter((item) => item.rejectedReasons.length > 0)
       .slice(0, 20)
       .map((item) => ({
@@ -1072,10 +1653,17 @@ serve(async (req: Request) => {
         recent_action_fingerprints: [...recentActionFingerprints],
         recent_categories: recentCategoryCounts,
         active_categories: activeCategoryCounts,
-        repeat_block_window_days: HARD_REPEAT_DAYS,
-        repeat_block_limit: HARD_REPEAT_MISSION_LIMIT,
+        repeat_block_policy: "pattern_metadata_cooldown_days",
+        default_repeat_block_window_days: HARD_REPEAT_DAYS,
+        legacy_repeat_block_limit: HARD_REPEAT_MISSION_LIMIT,
         repeat_block_pattern_keys: [...repeatBlockPatternKeys],
         repeat_block_action_fingerprints: [...repeatBlockActionFingerprints],
+        selection_repeat_policy: selectionRepeatPolicy,
+        selection_repeat_block_pattern_keys: [...selectionRepeatBlockPatternKeys],
+        selection_repeat_block_action_fingerprints: [...selectionRepeatBlockActionFingerprints],
+        outcome_stats: {
+          categories: outcomeStats.byCategory,
+        },
       },
     };
 
@@ -1089,7 +1677,7 @@ serve(async (req: Request) => {
     const aiRuntime = aiRuntimeSummary();
 
     const blueprints: MissionBlueprint[] = [];
-    for (const rankedPattern of ranked) {
+    for (const rankedPattern of selectionRanked) {
       if (rankedPattern.rejectedReasons.length > 0) continue;
 
       let usedFacts = rankedPattern.usedFacts;
@@ -1135,6 +1723,7 @@ serve(async (req: Request) => {
         candidates: [] as MissionCandidate[],
         usedAi: false,
         fallbackReason: "no_valid_blueprint_after_filters",
+        fallbackDetail: "no_valid_blueprint_after_filters",
       };
     aiAttemptCount = aiComposition.usedAi ? aiComposition.candidates.length : blueprints.length;
 
@@ -1158,9 +1747,9 @@ serve(async (req: Request) => {
       const blueprint = blueprintByPatternKey.get(attempt.candidate.pattern_key);
       const validation = validateCandidate(attempt.candidate, {
         facts,
-        repeatBlockMissions,
-        repeatBlockPatternKeys,
-        repeatBlockActionFingerprints,
+        repeatBlockMissions: selectionRepeatBlockMissions,
+        repeatBlockPatternKeys: selectionRepeatBlockPatternKeys,
+        repeatBlockActionFingerprints: selectionRepeatBlockActionFingerprints,
         userLevel,
       });
 
@@ -1197,6 +1786,57 @@ serve(async (req: Request) => {
     }
 
     if (!finalCandidate || !selectedPattern) {
+      const attemptedPatternKeys = new Set(
+        candidateAttempts.map((attempt) => attempt.candidate.pattern_key),
+      );
+
+      for (const rankedPattern of selectionRanked) {
+        if (rankedPattern.rejectedReasons.length > 0) continue;
+        if (attemptedPatternKeys.has(rankedPattern.pattern.key)) continue;
+
+        let usedFacts = rankedPattern.usedFacts;
+        if (!usedFacts.length) {
+          usedFacts = [await ensureColdStartFact(supabaseAdmin, userId, rankedPattern.pattern.category)];
+          facts = [...facts.filter((fact) => fact.fact_key !== usedFacts[0].fact_key), ...usedFacts];
+        }
+
+        const fallbackCandidate = buildFallbackCandidate(
+          rankedPattern.pattern,
+          usedFacts,
+          profile,
+          missionType,
+        );
+        const validation = validateCandidate(fallbackCandidate, {
+          facts,
+          repeatBlockMissions: selectionRepeatBlockMissions,
+          repeatBlockPatternKeys: selectionRepeatBlockPatternKeys,
+          repeatBlockActionFingerprints: selectionRepeatBlockActionFingerprints,
+          userLevel,
+        });
+        aiAttemptCount += 1;
+
+        if (validation.valid) {
+          finalCandidate = fallbackCandidate;
+          selectedPattern = rankedPattern.pattern;
+          usedAi = false;
+          usedFallback = true;
+          finalFallbackReason = "expanded_deterministic_fallback_after_invalid_candidates";
+          break;
+        }
+
+        validationErrors.push({
+          pattern_key: fallbackCandidate.pattern_key,
+          action_fingerprint: fallbackCandidate.action_fingerprint,
+          source: "expanded_fallback",
+          ai_used: false,
+          errors: validation.errors,
+          warnings: validation.warnings,
+          ai_fallback_reason: "expanded_deterministic_fallback_after_invalid_candidates",
+        });
+      }
+    }
+
+    if (!finalCandidate || !selectedPattern) {
       const errorGenerationSnapshot = {
         ...generationSnapshot,
         ai: {
@@ -1204,6 +1844,7 @@ serve(async (req: Request) => {
           ai_used: false,
           ai_stage: "mission_composer",
           fallback_reason: "no_valid_pattern_candidate",
+          fallback_detail: aiComposition.fallbackDetail ?? "no_valid_pattern_candidate",
           candidate_count: aiAttemptCount,
           blueprint_count: blueprints.length,
           ai_candidate_count: aiComposition.candidates.length,
@@ -1240,6 +1881,9 @@ serve(async (req: Request) => {
         ai_stage: "mission_composer",
         fallback_reason: usedFallback
           ? finalFallbackReason ?? "deterministic_contextual_fallback"
+          : null,
+        fallback_detail: usedFallback
+          ? aiComposition.fallbackDetail ?? finalFallbackReason ?? "deterministic_contextual_fallback"
           : null,
         candidate_count: aiAttemptCount,
         blueprint_count: blueprints.length,
@@ -1370,6 +2014,9 @@ serve(async (req: Request) => {
       aiModel: aiRuntime.ai_model,
       fallbackReason: usedFallback
         ? finalFallbackReason ?? "deterministic_contextual_fallback"
+        : null,
+      fallbackDetail: usedFallback
+        ? aiComposition.fallbackDetail ?? finalFallbackReason ?? "deterministic_contextual_fallback"
         : null,
       candidateCount: aiAttemptCount,
       blueprintCount: blueprints.length,

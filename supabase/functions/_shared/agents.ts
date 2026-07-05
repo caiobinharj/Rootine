@@ -8,6 +8,10 @@ interface RunJsonAgentOptions {
 }
 
 const DEFAULT_MODEL = "gpt-4.1-mini";
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
+const DEFAULT_HTTP_TIMEOUT_MS = 45000;
+type HttpAgentProvider = "openai" | "gemini" | "groq";
 
 const AGENTS: Record<AgentRole, { name: string; instructions: string }> = {
   orchestrator: {
@@ -70,6 +74,17 @@ export function clampAffinities(value: Record<string, unknown> = {}) {
   return affinities;
 }
 
+function configuredSecret(value: string | undefined) {
+  const cleaned = String(value ?? "").trim();
+  if (!cleaned || cleaned.toLowerCase().includes("sua_chave")) return null;
+  return cleaned;
+}
+
+function envNumber(name: string, fallback: number) {
+  const value = Number(Deno.env.get(name));
+  return Number.isFinite(value) ? value : fallback;
+}
+
 export function parseJsonObject<T extends Record<string, unknown>>(
   raw: string,
   fallback: T,
@@ -85,11 +100,34 @@ export function parseJsonObject<T extends Record<string, unknown>>(
     const parsed = JSON.parse(json);
     return parsed && typeof parsed === "object"
       ? parsed
-      : { ...fallback, _fallback_reason: "invalid_agent_payload" } as T;
+      : {
+        ...fallback,
+        _fallback_reason: "invalid_agent_payload",
+        _fallback_detail: "invalid_agent_payload",
+      } as T;
   } catch (error) {
     console.error("[AGENTS] JSON parse failed:", error);
-    return { ...fallback, _fallback_reason: "invalid_json" } as T;
+    return { ...fallback, _fallback_reason: "invalid_json", _fallback_detail: "invalid_json" } as T;
   }
+}
+
+function sanitizeAgentError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const lower = message.toLowerCase();
+  const statusMatch = message.match(/\b(?:http_|erro\s+\w+:\s*)(\d{3})\b/i);
+  const status = statusMatch ? Number(statusMatch[1]) : null;
+
+  if (status === 429 || lower.includes("rate limit") || lower.includes("insufficient_quota")) {
+    return "rate_limit";
+  }
+  if (status === 401 || status === 403 || lower.includes("invalid api key") || lower.includes("unauthorized")) {
+    return "auth_error";
+  }
+  if (status) return `http_${status}`;
+  if (lower.includes("timeout") || lower.includes("timed out")) return "timeout";
+  if (lower.includes("network") || lower.includes("fetch")) return "network_error";
+  if (lower.includes("json")) return "invalid_json";
+  return "provider_error";
 }
 
 function buildFallbackResult<T extends Record<string, unknown>>(
@@ -98,6 +136,7 @@ function buildFallbackResult<T extends Record<string, unknown>>(
   error: unknown,
 ): T {
   const message = error instanceof Error ? error.message : String(error);
+  const fallbackDetail = sanitizeAgentError(error);
   const isQuotaError =
     message.includes("insufficient_quota") ||
     message.includes("exceeded your current quota") ||
@@ -109,24 +148,27 @@ function buildFallbackResult<T extends Record<string, unknown>>(
       answer:
         "A cota da OpenAI deste projeto acabou. Adicione créditos em platform.openai.com, atualize a chave com `npx supabase secrets set OPEN_AI_KEY=...` e tente novamente.",
       _fallback_reason: "openai_quota",
+      _fallback_detail: fallbackDetail,
     } as T;
   }
 
   if (
     message.includes("OPENAI_API_KEY") ||
     message.includes("OPEN_AI_KEY") ||
+    message.includes("GEMINI_API_KEY") ||
     message.includes("GROQ_API_KEY")
   ) {
     return {
       ...fallback,
       answer:
-        "A chave de IA não está configurada nas Edge Functions. Configure `GROQ_API_KEY` ou `OPEN_AI_KEY` nos secrets do Supabase.",
+        "A chave de IA não está configurada nas Edge Functions. Configure `GEMINI_API_KEY`, `GROQ_API_KEY` ou `OPEN_AI_KEY` nos secrets do Supabase.",
       _fallback_reason: "missing_agent_key",
+      _fallback_detail: "missing_agent_key",
     } as T;
   }
 
   console.warn(`[AGENTS] ${role} failed; using fallback output:`, error);
-  return { ...fallback, _fallback_reason: "agent_error" } as T;
+  return { ...fallback, _fallback_reason: "agent_error", _fallback_detail: fallbackDetail } as T;
 }
 
 export async function runJsonAgent<T extends Record<string, unknown>>({
@@ -154,13 +196,16 @@ Return STRICTLY valid JSON. Do not wrap it in markdown.`);
 }
 
 async function runAgentText(role: AgentRole, input: string): Promise<string> {
-  const openAiKey = Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY");
-  const groqKey = Deno.env.get("GROQ_API_KEY");
+  const openAiKey = configuredSecret(Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY"));
+  const geminiKey = configuredSecret(Deno.env.get("GEMINI_API_KEY"));
+  const groqKey = configuredSecret(Deno.env.get("GROQ_API_KEY"));
+  const groqFallbackEnabled = Deno.env.get("GROQ_FALLBACK_ENABLED") === "true";
   let lastError: unknown = null;
 
   console.log("[AGENTS] Provider configuration:", {
     role,
     openaiConfigured: Boolean(openAiKey),
+    geminiConfigured: Boolean(geminiKey),
     groqConfigured: Boolean(groqKey),
   });
 
@@ -180,7 +225,16 @@ async function runAgentText(role: AgentRole, input: string): Promise<string> {
     }
   }
 
-  if (groqKey) {
+  if (geminiKey) {
+    try {
+      return await runAgentHttp(role, input, geminiKey, "gemini");
+    } catch (error) {
+      console.warn("[AGENTS] Gemini HTTP failed:", error);
+      lastError = error;
+    }
+  }
+
+  if (groqKey && (!geminiKey || groqFallbackEnabled)) {
     try {
       return await runAgentHttp(role, input, groqKey, "groq");
     } catch (error) {
@@ -190,7 +244,7 @@ async function runAgentText(role: AgentRole, input: string): Promise<string> {
   }
 
   if (lastError instanceof Error) throw lastError;
-  throw new Error("Configure OPEN_AI_KEY ou GROQ_API_KEY nas secrets do Supabase.");
+  throw new Error("Configure OPEN_AI_KEY, GEMINI_API_KEY ou GROQ_API_KEY nas secrets do Supabase.");
 }
 
 async function runAgentSdk(role: AgentRole, input: string, apiKey: string) {
@@ -216,16 +270,20 @@ async function runAgentHttp(
   role: AgentRole,
   input: string,
   apiKey: string,
-  provider: "openai" | "groq",
+  provider: HttpAgentProvider,
   useJsonMode = true,
 ) {
   const config = AGENTS[role];
   const model = provider === "groq"
-    ? Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile"
-    : Deno.env.get("OPENAI_MODEL") ?? DEFAULT_MODEL;
+    ? Deno.env.get("GROQ_MODEL") ?? DEFAULT_GROQ_MODEL
+    : provider === "gemini"
+      ? Deno.env.get("GEMINI_MODEL") ?? DEFAULT_GEMINI_MODEL
+      : Deno.env.get("OPENAI_MODEL") ?? DEFAULT_MODEL;
   const url = provider === "groq"
     ? "https://api.groq.com/openai/v1/chat/completions"
-    : "https://api.openai.com/v1/chat/completions";
+    : provider === "gemini"
+      ? "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions"
+      : "https://api.openai.com/v1/chat/completions";
 
   const requestBody: Record<string, unknown> = {
     model,
@@ -233,31 +291,46 @@ async function runAgentHttp(
       { role: "system", content: config.instructions },
       { role: "user", content: input },
     ],
+    temperature: envNumber("AGENT_TEMPERATURE", 0.45),
   };
 
   if (useJsonMode) {
     requestBody.response_format = { type: "json_object" };
   }
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(requestBody),
-  });
+  const timeoutMs = Math.max(3000, envNumber("AGENT_HTTP_TIMEOUT_MS", DEFAULT_HTTP_TIMEOUT_MS));
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(requestBody),
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error(`Erro ${provider}: timeout after ${timeoutMs}ms`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 
   if (!response.ok) {
     const errorText = await response.text();
     const lowerError = errorText.toLowerCase();
     if (
-      provider === "groq" &&
+      (provider === "groq" || provider === "gemini") &&
       useJsonMode &&
       response.status === 400 &&
       (lowerError.includes("response_format") || lowerError.includes("json_object"))
     ) {
-      console.warn("[AGENTS] Groq JSON mode unsupported, retrying without response_format.");
+      console.warn(`[AGENTS] ${provider} JSON mode unsupported, retrying without response_format.`);
       return runAgentHttp(role, input, apiKey, provider, false);
     }
 

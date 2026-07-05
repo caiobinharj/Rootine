@@ -102,22 +102,32 @@ function costRank(value: unknown) {
 
 function hasAiKey() {
   return Boolean(
-    Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY") ?? Deno.env.get("GROQ_API_KEY"),
+    Deno.env.get("OPENAI_API_KEY") ??
+      Deno.env.get("OPEN_AI_KEY") ??
+      Deno.env.get("GEMINI_API_KEY") ??
+      Deno.env.get("GROQ_API_KEY"),
   );
 }
 
 function aiRuntimeSummary() {
-  if (Deno.env.get("GROQ_API_KEY")) {
-    return {
-      ai_provider: "groq",
-      ai_model: Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile",
-    };
-  }
-
   if (Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY")) {
     return {
       ai_provider: "openai",
       ai_model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini",
+    };
+  }
+
+  if (Deno.env.get("GEMINI_API_KEY")) {
+    return {
+      ai_provider: "gemini",
+      ai_model: Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash",
+    };
+  }
+
+  if (Deno.env.get("GROQ_API_KEY")) {
+    return {
+      ai_provider: "groq",
+      ai_model: Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile",
     };
   }
 
@@ -226,8 +236,36 @@ function blockedActionMentioned(text: string, blockedAction: string) {
 function factLabel(fact: ProfileFact) {
   const value = asObject(fact.value);
   if (typeof value.label === "string") return value.label;
-  if (typeof value.signal_key === "string") return value.signal_key;
-  return fact.fact_key;
+  if (typeof value.summary === "string") return value.summary;
+  return categoryLabel(fact.category);
+}
+
+function categoryLabel(category: unknown) {
+  const labels: Record<string, string> = {
+    water: "água",
+    energy: "energia",
+    waste: "resíduos",
+    transport: "transporte",
+    food: "alimentação",
+    consumption: "consumo",
+  };
+  return labels[String(category ?? "")] ?? "sustentabilidade";
+}
+
+function issueTypeLabel(issueType: FeedbackClassificationV1["issue_type"]) {
+  const labels: Record<FeedbackClassificationV1["issue_type"], string> = {
+    time: "tempo disponível",
+    cost: "custo",
+    access: "acesso real",
+    health: "saúde",
+    safety: "segurança",
+    preference: "preferência",
+    already_doing: "ação que você já faz",
+    too_easy: "desafio baixo demais",
+    too_hard: "dificuldade alta demais",
+    unclear: "feedback conservador",
+  };
+  return labels[issueType] ?? "feedback recebido";
 }
 
 function buildIssueDescription(input: {
@@ -386,7 +424,7 @@ function buildEditedCandidate(input: {
     xp_reward: XP_REWARD_BY_DIFFICULTY[difficulty] ?? 10,
     used_fact_keys: safeUsedFactKeys,
     personalization_reason:
-      `${pattern.fallback_reason_pt} A edição tratou o feedback como restrição (${classification.issue_type}) e preservou impacto ambiental positivo sem criar hard block automático.`,
+      `${pattern.fallback_reason_pt} A edição considerou seu feedback sobre ${issueTypeLabel(classification.issue_type)} e manteve uma ação sustentável dentro de limites mais realistas.`,
     expected_impact: expectedImpact,
     pattern_key: pattern.key,
     action_fingerprint: pattern.action_fingerprint,

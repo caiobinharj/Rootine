@@ -21,6 +21,22 @@ interface MissionCardProps {
   expiresAt: string;
 }
 
+function sanitizeJustification(value: string) {
+  const cleaned = String(value ?? "")
+    .replace(
+      /Usei como base o fato\s+"[^"]+"\s+e respeitei tempo, custo e autonomia do perfil\./gi,
+      "Ela considera aprendizados do seu perfil e respeita tempo, custo e autonomia.",
+    )
+    .replace(
+      /\b(?:water|energy|waste|transport|food|consumption|onboarding|adventure|trail|cold_start|feedback)\.[a-z0-9_.-]+\b/gi,
+      "um aprendizado do seu perfil",
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return cleaned || "A missão foi ajustada ao seu perfil e aos limites informados.";
+}
+
 export default function MissionCard({
   missionId,
   title,
@@ -37,6 +53,7 @@ export default function MissionCard({
   const styles = createStyles(theme, categoryColor);
   const { completeMission, failMission, refuseMission } = useEcoStore();
   const [editModalVisible, setEditModalVisible] = useState(false);
+  const readableJustification = sanitizeJustification(justification);
 
   const timeLeft = dayjs(expiresAt).fromNow();
   const isExpired = dayjs().isAfter(dayjs(expiresAt));
@@ -67,7 +84,7 @@ export default function MissionCard({
 
         <View style={styles.aiBox}>
           <Text style={styles.aiLabel}>POR QUE ESTA MISSÃO?</Text>
-          <Text style={styles.aiContent}>{justification}</Text>
+          <Text style={styles.aiContent}>{readableJustification}</Text>
         </View>
 
         <View style={styles.actions}>
