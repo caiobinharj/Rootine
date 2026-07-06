@@ -1,0 +1,11 @@
+# Backend Python do Rootine (Python 3.11+)
+supabase>=2.6,<3          # PostgREST client (upsert nas tabelas biosphere_*)
+google-genai>=1.16        # SDK oficial Gemini (response_schema estruturado)
+pydantic>=2.7,<3          # schemas estritos (quiz + vereditos do filtro)
+httpx>=0.27,<1            # HTTP dos coletores (RSS, Sympla, INEA)
+feedparser>=6.0.11        # parse de RSS/Atom
+beautifulsoup4>=4.12      # scraping defensivo (Sympla/INEA, strip de HTML)
+python-dotenv>=1.0        # carrega o .env
+tzdata>=2024.1            # zoneinfo America/Sao_Paulo no Windows
+fastapi>=0.111            # API opcional do serviço de quiz
+uvicorn>=0.30             # servidor da API

@@ -1,0 +1,1029 @@
+import { AppHeader } from "@/components/AppHeader";
+import { RootineBackground } from "@/components/RootineBackground";
+import { RootineTheme } from "@/constants/rootine-theme";
+import { useRootineTheme } from "@/hooks/useRootineTheme";
+import { getLevelFromXp } from "@/lib/domain/xp";
+import { supabase } from "@/lib/supabase";
+import { useEcoStore } from "@/store/useEcoStore";
+import { useFocusEffect } from "expo-router";
+import React, { useCallback, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TouchableOpacity,
+  View,
+} from "react-native";
+import Svg, { Path } from "react-native-svg";
+
+type ProfileTab = "stats" | "achievements" | "history" | "facts";
+
+type AchievementView = {
+  key: string;
+  title: string;
+  description: string;
+  xpReward: number;
+  grantedXp: number;
+  unlocked: boolean;
+  unlockedAt: string | null;
+  sortOrder: number;
+};
+
+type ImpactTotals = {
+  co2_kg: number;
+  water_l: number;
+  waste_g: number;
+  energy_kwh: number;
+};
+
+const EMPTY_IMPACT: ImpactTotals = {
+  co2_kg: 0,
+  water_l: 0,
+  waste_g: 0,
+  energy_kwh: 0,
+};
+
+const FACT_ACTION_LABEL: Record<string, string> = {
+  FACT_HIDDEN: "Ocultar",
+  FACT_TYPE_REPORTED: "Tipo incorreto",
+  FACT_INTERPRETATION_REPORTED: "Interpretação incorreta",
+};
+
+const CATEGORY_LABELS: Record<string, string> = {
+  water: "Água",
+  energy: "Energia",
+  waste: "Resíduos",
+  transport: "Transporte",
+  food: "Alimentação",
+  consumption: "Consumo",
+};
+
+const FACT_TYPE_LABELS: Record<string, string> = {
+  habit: "Hábito observado",
+  capability: "Algo que você consegue fazer",
+  constraint: "Limitação a respeitar",
+  preference: "Preferência",
+  interest: "Interesse",
+  deficit: "Ponto para aprender",
+  context: "Contexto da rotina",
+  goal: "Objetivo",
+  risk: "Cuidado de segurança",
+};
+
+const SIGNAL_LABELS: Record<string, string> = {
+  has_bucket: "balde disponível",
+  has_kitchen_access: "acesso à cozinha",
+  uses_public_transport: "uso possível de transporte público",
+  recycling_inconsistent: "separação de resíduos ainda irregular",
+  small_changes: "preferência por mudanças pequenas",
+  money_low: "orçamento mais apertado",
+  time_low: "pouco tempo livre",
+  free_time_window: "janela de tempo informada",
+  water_control: "controle sobre uso de água",
+  energy_control: "controle sobre uso de energia",
+  kitchen_access: "acesso à cozinha",
+  primary_mobility: "forma principal de deslocamento",
+  financial_friction: "limite de orçamento",
+  dietary_context: "contexto alimentar",
+  safety_boundary: "limite de segurança",
+  sustainability_experience: "experiência com sustentabilidade",
+  personal_goal: "objetivo pessoal",
+};
+
+const FACT_ACTION_HELP = {
+  FACT_HIDDEN: "Ocultar tira este fato da sua visualização. Ele continua registrado como histórico para auditoria.",
+  FACT_TYPE_REPORTED: "Tipo incorreto avisa que o app classificou mal o fato, por exemplo chamou de hábito algo que era limitação.",
+  FACT_INTERPRETATION_REPORTED: "Interpretação incorreta avisa que a frase não representa bem sua realidade.",
+};
+
+const IMPACT_METRICS = [
+  { key: "water_l", label: "Água", unit: "L", category: "water" },
+  { key: "co2_kg", label: "CO2", unit: "kg", category: "transport" },
+  { key: "waste_g", label: "Resíduos", unit: "g", category: "waste" },
+  { key: "energy_kwh", label: "Energia", unit: "kWh", category: "energy" },
+] as const;
+
+function safeDate(value: unknown) {
+  const date = new Date(String(value ?? ""));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function formatDate(value: unknown) {
+  const date = safeDate(value);
+  return date
+    ? date.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })
+    : "sem data";
+}
+
+function startOfWeekMs() {
+  const now = new Date();
+  const day = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+  const diff = (day.getUTCDay() + 6) % 7;
+  day.setUTCDate(day.getUTCDate() - diff);
+  return day.getTime();
+}
+
+function startOfMonthMs() {
+  const now = new Date();
+  return Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+}
+
+function numberValue(value: unknown, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function roundImpact(totals: ImpactTotals): ImpactTotals {
+  return {
+    co2_kg: Number(totals.co2_kg.toFixed(3)),
+    water_l: Number(totals.water_l.toFixed(1)),
+    waste_g: Number(totals.waste_g.toFixed(1)),
+    energy_kwh: Number(totals.energy_kwh.toFixed(3)),
+  };
+}
+
+function addImpact(target: ImpactTotals, impact: any) {
+  target.co2_kg += numberValue(impact?.co2_kg?.mid, 0);
+  target.water_l += numberValue(impact?.water_l?.mid, 0);
+  target.waste_g += numberValue(impact?.waste_g?.mid, 0);
+  target.energy_kwh += numberValue(impact?.energy_kwh?.mid, 0);
+}
+
+function aggregateImpact(rows: any[]) {
+  const week = { ...EMPTY_IMPACT };
+  const month = { ...EMPTY_IMPACT };
+  const total = { ...EMPTY_IMPACT };
+  const weekStart = startOfWeekMs();
+  const monthStart = startOfMonthMs();
+
+  rows.forEach((row) => {
+    const loggedAt = safeDate(row.logged_at)?.getTime() ?? 0;
+    addImpact(total, row.impact);
+    if (loggedAt >= monthStart) addImpact(month, row.impact);
+    if (loggedAt >= weekStart) addImpact(week, row.impact);
+  });
+
+  return {
+    week: roundImpact(week),
+    month: roundImpact(month),
+    total: roundImpact(total),
+  };
+}
+
+function aggregateXp(rows: any[]) {
+  const weekStart = startOfWeekMs();
+  const monthStart = startOfMonthMs();
+  return rows.reduce(
+    (acc, row) => {
+      const createdAt = safeDate(row.created_at)?.getTime() ?? 0;
+      const xp = numberValue(row.xp_delta, 0);
+      acc.total += xp;
+      if (createdAt >= monthStart) acc.month += xp;
+      if (createdAt >= weekStart) acc.week += xp;
+      return acc;
+    },
+    { week: 0, month: 0, total: 0 },
+  );
+}
+
+function dateKey(value: unknown) {
+  const date = safeDate(value);
+  if (!date) return null;
+  return date.toISOString().slice(0, 10);
+}
+
+function calculateStreak(days: Set<string>) {
+  let streak = 0;
+  const cursor = new Date();
+  while (streak < 365) {
+    const key = cursor.toISOString().slice(0, 10);
+    if (!days.has(key)) break;
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+  return streak;
+}
+
+function factLabel(fact: any) {
+  const value = fact?.value && typeof fact.value === "object" ? fact.value : {};
+  if (typeof value.summary === "string" && value.summary.trim()) return value.summary.trim();
+
+  const direct = [value.label, value.signal_key]
+    .find((item) => typeof item === "string" && item.trim().length > 0);
+  return humanizeToken(direct || fact.fact_key);
+}
+
+function humanizeToken(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "aprendizado do perfil";
+
+  const normalized = text
+    .replace(/^trail\.mission\./, "")
+    .replace(/^adventure\.flashcard\./, "")
+    .replace(/^adventure\.quiz\./, "")
+    .replace(/^adventure\./, "")
+    .replace(/^onboarding\./, "")
+    .replace(/^feedback\./, "")
+    .replace(/^cold_start\./, "")
+    .replace(/^(water|energy|waste|transport|food|consumption)\./, "")
+    .replace(/^(habit|capability|constraint|preference|interest|deficit|context|goal|risk)\./, "");
+  const signalKey = normalized.split(".").pop()?.replace(/[^a-z0-9_ -]/gi, " ").trim() ?? "";
+  const mapped = SIGNAL_LABELS[signalKey] ?? SIGNAL_LABELS[normalized.replace(/[.\s-]+/g, "_")];
+  if (mapped) return mapped;
+
+  return signalKey
+    .replace(/_/g, " ")
+    .replace(/\bhas\b/gi, "tem")
+    .replace(/\bbucket\b/gi, "balde")
+    .replace(/\bkitchen\b/gi, "cozinha")
+    .replace(/\bpublic transport\b/gi, "transporte público")
+    .replace(/\brecycling\b/gi, "reciclagem")
+    .replace(/\btime\b/gi, "tempo")
+    .replace(/\bmoney\b/gi, "orçamento")
+    .replace(/\bsmall changes\b/gi, "mudanças pequenas")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase())
+    .trim();
+}
+
+function categoryLabel(category: unknown) {
+  const key = String(category ?? "").trim();
+  if (!key) return "Geral";
+  return CATEGORY_LABELS[key] ?? humanizeToken(key);
+}
+
+function factTypeLabel(type: unknown) {
+  return FACT_TYPE_LABELS[String(type ?? "")] ?? "Aprendizado";
+}
+
+function factConfidenceLabel(confidence: unknown) {
+  const value = numberValue(confidence, 0);
+  if (value >= 0.8) return "Alta certeza";
+  if (value >= 0.55) return "Certeza média";
+  return "Baixa certeza";
+}
+
+function factSentence(fact: any) {
+  const value = fact?.value && typeof fact.value === "object" ? fact.value : {};
+  const readable = factLabel(fact);
+  const type = String(fact.fact_type ?? "");
+  const category = categoryLabel(fact.category).toLowerCase();
+
+  if (String(fact.fact_key ?? "").startsWith("cold_start.")) {
+    return "O app ainda tem poucos dados sobre você, então começa com missões pequenas e observáveis.";
+  }
+
+  if (String(fact.fact_key ?? "").startsWith("trail.mission.") || value.source === "mission_action") {
+    const action = String(value.action ?? "");
+    if (action === "completed") return `Você concluiu uma missão de ${category}; isso ajuda o app a calibrar próximas ações.`;
+    if (action === "refused") return `Você recusou uma missão de ${category}; isso reduz a prioridade de propostas parecidas.`;
+    if (action === "failed") return `Uma missão de ${category} ficou difícil de concluir; o app deve reduzir esforço ou dificuldade antes de repetir.`;
+    return `Seu histórico recente em ${category} ajuda a calibrar novas missões.`;
+  }
+
+  if (typeof value.summary === "string" && value.summary.trim()) return value.summary.trim();
+  if (type === "habit") return `Você demonstrou um hábito relacionado a ${readable}.`;
+  if (type === "capability") return `O app identificou uma condição favorável: ${readable}.`;
+  if (type === "constraint") return `As missões devem respeitar este limite: ${readable}.`;
+  if (type === "preference") return `Você parece preferir algo relacionado a ${readable}.`;
+  if (type === "deficit") return `Este é um ponto para praticar ou aprender em ${category}.`;
+  if (type === "risk") return `Este cuidado de segurança deve ser respeitado: ${readable}.`;
+  if (type === "goal") return `Este objetivo ajuda a orientar missões de ${category}: ${readable}.`;
+  return `Aprendizado observado: ${readable}.`;
+}
+
+function factSourceLabel(source: unknown) {
+  const text = String(source ?? "");
+  if (text.includes("brain")) return "Aventura, missões ou feedback";
+  if (text.includes("onboarding")) return "Diagnóstico inicial";
+  if (text.includes("mission_edit")) return "Edição de missão";
+  return "Histórico do app";
+}
+
+export default function ProfileScreen() {
+  const { theme } = useRootineTheme();
+  const styles = useProfileStyles();
+  const [profileData, setProfileData] = useState<any>(null);
+  const [missions, setMissions] = useState<any[]>([]);
+  const [quizHistory, setQuizHistory] = useState<any[]>([]);
+  const [flashcardHistory, setFlashcardHistory] = useState<any[]>([]);
+  const [achievementRows, setAchievementRows] = useState<AchievementView[]>([]);
+  const [xpRows, setXpRows] = useState<any[]>([]);
+  const [impactRows, setImpactRows] = useState<any[]>([]);
+  const [facts, setFacts] = useState<any[]>([]);
+  const [factEvents, setFactEvents] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<ProfileTab>("stats");
+  const [factActionLoading, setFactActionLoading] = useState<string | null>(null);
+  const [factHelpVisible, setFactHelpVisible] = useState(false);
+  const { xp, fetchProfile } = useEcoStore();
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return;
+
+      await fetchProfile(user.id);
+
+      const [
+        { data: profile },
+        { data: missionRows },
+        { data: flashcardRows },
+        { data: quizRows },
+        { data: achievementDefinitions },
+        { data: userAchievements },
+        { data: xpLedgerRows },
+        { data: impactLedgerRows },
+        { data: factRows },
+        { data: eventRows },
+      ] = await Promise.all([
+        supabase.from("profiles").select("*").eq("id", user.id).single(),
+        supabase
+          .from("user_missions")
+          .select("id,title,status,created_at,completed_at,mission_type,category,difficulty,xp_reward,pattern_key,action_fingerprint")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(80),
+        supabase
+          .from("user_flashcards_answers")
+          .select("id,answer,answered_at,flashcards(question,category,signal_key)")
+          .eq("user_id", user.id)
+          .order("answered_at", { ascending: false })
+          .limit(40),
+        supabase
+          .from("user_quiz_answers")
+          .select("id,selected_option,correct,answered_at,quiz_questions(question,category,signal_key)")
+          .eq("user_id", user.id)
+          .order("answered_at", { ascending: false })
+          .limit(30),
+        supabase
+          .from("achievement_definitions")
+          .select("key,title,description,xp_reward,sort_order")
+          .order("sort_order", { ascending: true }),
+        supabase
+          .from("user_achievements")
+          .select("achievement_key,unlocked_at,xp_ledger_id")
+          .eq("user_id", user.id),
+        supabase
+          .from("xp_ledger")
+          .select("id,source_type,source_id,reason,xp_delta,metadata,created_at")
+          .eq("user_id", user.id)
+          .order("created_at", { ascending: false })
+          .limit(120),
+        supabase
+          .from("impact_ledger")
+          .select("impact,source_type,mission_id,metadata,logged_at")
+          .eq("user_id", user.id)
+          .order("logged_at", { ascending: false })
+          .limit(120),
+        supabase
+          .from("user_profile_facts")
+          .select("id,fact_key,fact_type,category,value,confidence,source_event_ids,evidence_count,active,derived_by,last_seen_at")
+          .eq("user_id", user.id)
+          .eq("active", true)
+          .order("last_seen_at", { ascending: false })
+          .limit(80),
+        supabase
+          .from("user_profile_events")
+          .select("id,event_type,source_table,source_id,payload,occurred_at")
+          .eq("user_id", user.id)
+          .order("occurred_at", { ascending: false })
+          .limit(200),
+      ]);
+
+      const xpByLedgerId = new Map<string, any>(
+        (xpLedgerRows || [])
+          .filter((row: any) => typeof row.id === "string")
+          .map((row: any): [string, any] => [row.id, row]),
+      );
+      const xpByAchievementKey = new Map<string, any>(
+        (xpLedgerRows || [])
+          .filter((row: any) => typeof row.metadata?.achievement_key === "string")
+          .map((row: any): [string, any] => [row.metadata.achievement_key, row]),
+      );
+      const unlockedByKey = new Map<string, any>(
+        (userAchievements || [])
+          .filter((achievement: any) => typeof achievement.achievement_key === "string")
+          .map((achievement: any): [string, any] => [achievement.achievement_key, achievement]),
+      );
+      const mergedAchievements = new Map<string, AchievementView>();
+
+      (achievementDefinitions || []).forEach((definition: any) => {
+        const unlocked = unlockedByKey.get(definition.key);
+        const xpRow = unlocked?.xp_ledger_id
+          ? xpByLedgerId.get(unlocked.xp_ledger_id)
+          : xpByAchievementKey.get(definition.key);
+        mergedAchievements.set(definition.key, {
+          key: definition.key,
+          title: definition.title,
+          description: definition.description,
+          xpReward: numberValue(definition.xp_reward, 0),
+          grantedXp: numberValue(xpRow?.xp_delta, definition.xp_reward ?? 0),
+          unlocked: Boolean(unlocked),
+          unlockedAt: unlocked?.unlocked_at ?? null,
+          sortOrder: numberValue(definition.sort_order, 9999),
+        });
+      });
+
+      setProfileData(profile);
+      setMissions(missionRows || []);
+      setFlashcardHistory(flashcardRows || []);
+      setQuizHistory(quizRows || []);
+      setXpRows(xpLedgerRows || []);
+      setImpactRows(impactLedgerRows || []);
+      setFacts(factRows || []);
+      setFactEvents(eventRows || []);
+      setAchievementRows(
+        [...mergedAchievements.values()].sort((left, right) =>
+          left.sortOrder - right.sortOrder || left.title.localeCompare(right.title)
+        ),
+      );
+
+      console.log("[PROFILE] Perfil carregado.", {
+        userId: user.id,
+        missions: missionRows?.length ?? 0,
+        facts: factRows?.length ?? 0,
+        xpRows: xpLedgerRows?.length ?? 0,
+        impactRows: impactLedgerRows?.length ?? 0,
+      });
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchProfile]);
+
+  const hiddenFactKeys = useMemo(() => {
+    return new Set(
+      factEvents
+        .filter((event) => event.event_type === "FACT_HIDDEN")
+        .map((event) => event.payload?.fact_key)
+        .filter((key): key is string => typeof key === "string"),
+    );
+  }, [factEvents]);
+
+  const visibleFacts = useMemo(
+    () => facts.filter((fact) => !hiddenFactKeys.has(fact.fact_key)),
+    [facts, hiddenFactKeys],
+  );
+
+  const impactPeriods = useMemo(() => aggregateImpact(impactRows), [impactRows]);
+  const xpPeriods = useMemo(() => aggregateXp(xpRows), [xpRows]);
+  const levelInfo = getLevelFromXp(xp || 0);
+
+  const derivedStats = useMemo(() => {
+    const completed = missions.filter((mission) => mission.status === "completed");
+    const refused = missions.filter((mission) => mission.status === "refused");
+    const failed = missions.filter((mission) => mission.status === "failed");
+    const decided = completed.length + refused.length + failed.length;
+    const categoryCounts = completed.reduce((acc: Record<string, number>, mission) => {
+      const category = mission.category || "sem categoria";
+      acc[category] = (acc[category] ?? 0) + 1;
+      return acc;
+    }, {});
+    const topCategory = Object.entries(categoryCounts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "Ainda sem dados";
+    const activeDays = new Set<string>();
+
+    missions.forEach((mission) => {
+      const key = dateKey(mission.completed_at || mission.created_at);
+      if (key) activeDays.add(key);
+    });
+    flashcardHistory.forEach((answer) => {
+      const key = dateKey(answer.answered_at);
+      if (key) activeDays.add(key);
+    });
+    quizHistory.forEach((answer) => {
+      const key = dateKey(answer.answered_at);
+      if (key) activeDays.add(key);
+    });
+
+    return {
+      completed: completed.length,
+      refused: refused.length,
+      failed: failed.length,
+      completionRate: decided ? Math.round((completed.length / decided) * 100) : 0,
+      topCategory,
+      streakDays: calculateStreak(activeDays),
+    };
+  }, [flashcardHistory, missions, quizHistory]);
+
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
+
+  const handleFactAction = async (fact: any, eventType: keyof typeof FACT_ACTION_LABEL) => {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user || factActionLoading) return;
+
+    setFactActionLoading(`${eventType}:${fact.fact_key}`);
+    try {
+      const { error } = await supabase.from("user_profile_events").insert({
+        user_id: user.id,
+        event_type: eventType,
+        source: "profile",
+        source_table: "user_profile_facts",
+        source_id: fact.id,
+        payload: {
+          fact_key: fact.fact_key,
+          previous_fact_type: fact.fact_type,
+          category: fact.category,
+          action_label: FACT_ACTION_LABEL[eventType],
+        },
+        metadata: {
+          schema_version: 1,
+          correction_mode: "event_only",
+        },
+      });
+
+      if (error) throw error;
+      console.log("[PROFILE] Evento de fato registrado.", {
+        userId: user.id,
+        eventType,
+        factKey: fact.fact_key,
+      });
+      await load();
+    } catch (error) {
+      console.error("[PROFILE] Erro ao registrar evento de fato:", error);
+    } finally {
+      setFactActionLoading(null);
+    }
+  };
+
+  if (loading) {
+    return (
+      <View style={styles.loadingScreen}>
+        <RootineBackground variant="journal" />
+        <ActivityIndicator color={theme.colors.primary} />
+      </View>
+    );
+  }
+
+  return (
+    <View style={styles.container}>
+      <RootineBackground variant="journal" />
+      <ScrollView style={styles.scroll} contentContainerStyle={styles.content}>
+        <AppHeader
+          eyebrow="Perfil"
+          title="Diário do guardião"
+          subtitle="Dados, impacto e fatos aprendidos em uma visão auditável."
+          compact
+        />
+
+        <View style={styles.identityRow}>
+          <BotanicalEmblem />
+          <View style={styles.identityCopy}>
+            <Text style={styles.userName}>
+              {profileData?.nome || profileData?.name || "Protetor do Habitat"}
+            </Text>
+            <Text style={styles.userXp}>
+              Nível {levelInfo.level} · {levelInfo.milestone}
+            </Text>
+            <Text style={styles.userProgress}>
+              {xp || 0} XP · {Math.round(levelInfo.progress * 100)}% até o próximo marco
+            </Text>
+          </View>
+        </View>
+
+      <View style={styles.tabs}>
+        {[
+          ["stats", "Estatísticas"],
+          ["achievements", "Conquistas"],
+          ["history", "Histórico"],
+          ["facts", "Fatos"],
+        ].map(([id, label]) => (
+          <TouchableOpacity
+            key={id}
+            style={[styles.tabButton, activeTab === id && styles.tabButtonActive]}
+            onPress={() => setActiveTab(id as ProfileTab)}
+          >
+            <Text style={[styles.tabText, activeTab === id && styles.tabTextActive]}>
+              {label}
+            </Text>
+          </TouchableOpacity>
+        ))}
+      </View>
+
+      {activeTab === "stats" && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Progresso auditável</Text>
+          <View style={styles.statsGrid}>
+            <StatCard label="XP semana" value={String(xpPeriods.week)} />
+            <StatCard label="XP mês" value={String(xpPeriods.month)} />
+            <StatCard label="Missões concluídas" value={String(derivedStats.completed)} />
+            <StatCard label="Missões recusadas" value={String(derivedStats.refused)} />
+            <StatCard label="Não consegui" value={String(derivedStats.failed)} />
+            <StatCard label="Taxa de conclusão" value={`${derivedStats.completionRate}%`} />
+            <StatCard label="Categoria foco" value={categoryLabel(derivedStats.topCategory)} />
+            <StatCard label="Sequência" value={`${derivedStats.streakDays} dia(s)`} />
+          </View>
+
+          <Text style={styles.sectionSubtitle}>Impacto estimado</Text>
+          <ImpactBlock title="Semana" totals={impactPeriods.week} />
+          <ImpactBlock title="Mês" totals={impactPeriods.month} />
+          <ImpactBlock title="Total" totals={impactPeriods.total} />
+          <Text style={styles.formulaText}>
+            Impacto estimado por modelos versionados; use como intervalo aproximado, não medição exata.
+          </Text>
+        </View>
+      )}
+
+      {activeTab === "achievements" && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Conquistas reais</Text>
+          {achievementRows.map((achievement) => (
+            <Achievement
+              key={achievement.key}
+              title={achievement.title}
+              unlocked={achievement.unlocked}
+              description={achievement.description}
+              xp={achievement.unlocked ? achievement.grantedXp : achievement.xpReward}
+              unlockedAt={achievement.unlockedAt}
+            />
+          ))}
+          {achievementRows.length === 0 ? (
+            <Text style={styles.emptyText}>As conquistas ainda não foram carregadas.</Text>
+          ) : null}
+        </View>
+      )}
+
+      {activeTab === "history" && (
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Histórico recente</Text>
+          {[...missions.slice(0, 16).map((mission) => ({
+            key: `mission-${mission.id}`,
+            title: mission.title,
+            meta: `Missão • ${mission.status} • ${mission.category || "geral"} • ${formatDate(mission.completed_at || mission.created_at)}`,
+          })),
+          ...xpRows.slice(0, 12).map((row) => ({
+            key: `xp-${row.id}`,
+            title: `${row.xp_delta > 0 ? "+" : ""}${row.xp_delta} XP`,
+            meta: `${row.source_type} • ${row.reason || "ledger"} • ${formatDate(row.created_at)}`,
+          })),
+          ...flashcardHistory.slice(0, 8).map((answer) => ({
+            key: `flashcard-${answer.id}`,
+            title: answer.flashcards?.question || "Flashcard respondido",
+            meta: `Aventura • ${answer.answer === true ? "sim" : answer.answer === false ? "não" : "pulado"} • ${formatDate(answer.answered_at)}`,
+          })),
+          ...quizHistory.slice(0, 8).map((answer) => ({
+            key: `quiz-${answer.id}`,
+            title: answer.quiz_questions?.question || "Quiz respondido",
+            meta: `Quiz • ${answer.correct ? "acerto" : "revisar"} • ${formatDate(answer.answered_at)}`,
+          }))].map((item) => (
+            <View key={item.key} style={styles.historyItem}>
+              <Text style={styles.historyTitle}>{item.title}</Text>
+              <Text style={styles.historyMeta}>{item.meta}</Text>
+            </View>
+          ))}
+        </View>
+      )}
+
+      {activeTab === "facts" && (
+        <View style={styles.section}>
+          <View style={styles.sectionHeaderRow}>
+            <Text style={[styles.sectionTitle, styles.sectionHeaderRowTitle]}>
+              Fatos aprendidos
+            </Text>
+            <TouchableOpacity
+              style={styles.infoButton}
+              onPress={() => setFactHelpVisible((visible) => !visible)}
+            >
+              <Text style={styles.infoButtonText}>i</Text>
+            </TouchableOpacity>
+          </View>
+          <Text style={styles.formulaText}>
+            Estes são aprendizados que o app usa para personalizar missões. Você pode corrigir qualquer item que não represente sua realidade.
+          </Text>
+          {factHelpVisible ? (
+            <View style={styles.helpBox}>
+              <Text style={styles.helpTitle}>Como revisar um fato</Text>
+              <Text style={styles.helpText}>{FACT_ACTION_HELP.FACT_HIDDEN}</Text>
+              <Text style={styles.helpText}>{FACT_ACTION_HELP.FACT_TYPE_REPORTED}</Text>
+              <Text style={styles.helpText}>{FACT_ACTION_HELP.FACT_INTERPRETATION_REPORTED}</Text>
+            </View>
+          ) : null}
+          {visibleFacts.map((fact) => (
+            <View key={fact.fact_key} style={styles.factCard}>
+              <View style={styles.factChipRow}>
+                <View style={styles.factChip}>
+                  <Text style={styles.factChipText}>{factTypeLabel(fact.fact_type)}</Text>
+                </View>
+                <View style={styles.factChip}>
+                  <Text style={styles.factChipText}>{categoryLabel(fact.category)}</Text>
+                </View>
+                <Text style={styles.factConfidence}>{factConfidenceLabel(fact.confidence)}</Text>
+              </View>
+              <Text style={styles.factTitle}>{factSentence(fact)}</Text>
+              <Text style={styles.factMeta}>
+                Aprendido por: {factSourceLabel(fact.derived_by)} • Baseado em {fact.evidence_count || 1} sinal(is) • Atualizado em {formatDate(fact.last_seen_at)}
+              </Text>
+              <View style={styles.factActions}>
+                {(["FACT_HIDDEN", "FACT_TYPE_REPORTED", "FACT_INTERPRETATION_REPORTED"] as const).map((eventType) => (
+                  <TouchableOpacity
+                    key={`${fact.fact_key}-${eventType}`}
+                    style={styles.factButton}
+                    onPress={() => handleFactAction(fact, eventType)}
+                    disabled={Boolean(factActionLoading)}
+                  >
+                    <Text style={styles.factButtonText}>{FACT_ACTION_LABEL[eventType]}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
+            </View>
+          ))}
+          {visibleFacts.length === 0 ? (
+            <Text style={styles.emptyText}>Ainda não há fatos ativos para exibir.</Text>
+          ) : null}
+        </View>
+      )}
+
+      </ScrollView>
+    </View>
+  );
+}
+
+function StatCard({ label, value }: { label: string; value: string }) {
+  const styles = useProfileStyles();
+  return (
+    <View style={styles.statCard}>
+      <Text style={styles.statValue}>{value}</Text>
+      <Text style={styles.statLabel}>{label}</Text>
+    </View>
+  );
+}
+
+function ImpactBlock({ title, totals }: { title: string; totals: ImpactTotals }) {
+  const { theme } = useRootineTheme();
+  const styles = useProfileStyles();
+  return (
+    <View style={styles.impactBlock}>
+      <Text style={styles.impactTitle}>{title}</Text>
+      <View style={styles.impactGrid}>
+        {IMPACT_METRICS.map((metric) => (
+          <View key={metric.key} style={styles.impactMetricCard}>
+            <View
+              style={[
+                styles.impactAccent,
+                {
+                  backgroundColor:
+                    theme.categories[metric.category as keyof typeof theme.categories],
+                },
+              ]}
+            />
+            <Text style={styles.impactMetricLabel}>{metric.label}</Text>
+            <Text style={styles.impactMetricValue}>
+              {totals[metric.key]} <Text style={styles.impactMetricUnit}>{metric.unit}</Text>
+            </Text>
+            <Text style={styles.impactMetricHint}>estimado</Text>
+          </View>
+        ))}
+      </View>
+    </View>
+  );
+}
+
+function Achievement({
+  title,
+  description,
+  unlocked,
+  xp,
+  unlockedAt,
+}: {
+  title: string;
+  description: string;
+  unlocked: boolean;
+  xp: number;
+  unlockedAt: string | null;
+}) {
+  const styles = useProfileStyles();
+  const dateText = unlockedAt ? ` • ${formatDate(unlockedAt)}` : "";
+
+  return (
+    <View style={[styles.achievement, unlocked && styles.achievementUnlocked]}>
+      <Text style={styles.achievementTitle}>{title}</Text>
+      <Text style={styles.achievementDescription}>{description}</Text>
+      <Text style={styles.achievementStatus}>
+        {unlocked ? "Desbloqueada" : "A caminho"} • +{xp} XP{dateText}
+      </Text>
+    </View>
+  );
+}
+
+function BotanicalEmblem() {
+  const { theme } = useRootineTheme();
+  const styles = useProfileStyles();
+
+  return (
+    <View style={styles.avatarCircle}>
+      <Svg width="62" height="62" viewBox="0 0 80 80">
+        <Path
+          d="M39 68 C38 55 39 43 42 31 C45 20 53 13 66 10 C66 28 55 39 44 43"
+          fill="none"
+          stroke={theme.colors.primaryStrong}
+          strokeLinecap="round"
+          strokeWidth="5"
+        />
+        <Path
+          d="M39 68 C39 54 36 42 29 31 C23 21 14 16 4 15 C5 31 17 43 35 45"
+          fill="none"
+          stroke={theme.colors.accent}
+          strokeLinecap="round"
+          strokeWidth="5"
+        />
+        <Path
+          d="M43 28 C52 17 61 13 73 14 C69 27 58 35 45 37 Z"
+          fill={theme.colors.primarySoft}
+          stroke={theme.colors.primary}
+          strokeWidth="2"
+        />
+        <Path
+          d="M31 31 C21 20 12 18 3 20 C8 33 19 40 34 39 Z"
+          fill={theme.colors.accentSoft}
+          stroke={theme.colors.accent}
+          strokeWidth="2"
+        />
+      </Svg>
+    </View>
+  );
+}
+
+function useProfileStyles() {
+  const { theme } = useRootineTheme();
+  return useMemo(() => createStyles(theme), [theme]);
+}
+
+const createStyles = (theme: RootineTheme) =>
+  StyleSheet.create({
+    container: { flex: 1, backgroundColor: theme.colors.background },
+    scroll: { flex: 1 },
+    loadingScreen: {
+      flex: 1,
+      alignItems: "center",
+      justifyContent: "center",
+      backgroundColor: theme.colors.background,
+    },
+    content: { paddingBottom: 40 },
+    identityRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      gap: 14,
+      marginHorizontal: 20,
+      marginTop: 14,
+      backgroundColor: theme.colors.transparentSurface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 14,
+    },
+    identityCopy: {
+      flex: 1,
+    },
+    avatarCircle: {
+      width: 78,
+      height: 78,
+      borderRadius: 39,
+      backgroundColor: theme.colors.surfaceRaised,
+      justifyContent: "center",
+      alignItems: "center",
+      elevation: 4,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      shadowColor: theme.colors.shadow,
+      shadowOpacity: 0.12,
+      shadowRadius: 12,
+      shadowOffset: { width: 0, height: 5 },
+    },
+    userName: { fontSize: 22, fontWeight: "800", color: theme.colors.text, lineHeight: 27 },
+    userXp: { fontSize: 14, color: theme.colors.primaryStrong, fontWeight: "800", marginTop: 4 },
+    userProgress: { color: theme.colors.textMuted, marginTop: 3, fontWeight: "700", lineHeight: 19 },
+    tabs: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      gap: 8,
+      marginTop: 18,
+      paddingHorizontal: 20,
+    },
+    tabButton: {
+      flexGrow: 1,
+      backgroundColor: theme.colors.surface,
+      paddingVertical: 10,
+      paddingHorizontal: 12,
+      borderRadius: 999,
+      alignItems: "center",
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    tabButtonActive: { backgroundColor: theme.colors.primary },
+    tabText: { color: theme.colors.textMuted, fontWeight: "700", fontSize: 12 },
+    tabTextActive: { color: theme.colors.textOnPrimary },
+    section: {
+      marginHorizontal: 20,
+      marginTop: 20,
+      backgroundColor: theme.colors.surfaceRaised,
+      borderRadius: 8,
+      padding: 20,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    sectionHeaderRow: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+      marginBottom: 12,
+    },
+    sectionTitle: { fontSize: 16, fontWeight: "800", color: theme.colors.primaryStrong, marginBottom: 15 },
+    sectionHeaderRowTitle: { marginBottom: 0 },
+    infoButton: {
+      width: 28,
+      height: 28,
+      borderRadius: 14,
+      backgroundColor: theme.colors.primarySoft,
+      alignItems: "center",
+      justifyContent: "center",
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+    },
+    infoButtonText: { color: theme.colors.primaryStrong, fontWeight: "800", fontSize: 14 },
+    sectionSubtitle: { color: theme.colors.primaryStrong, fontWeight: "800", marginTop: 18, marginBottom: 8 },
+    statsGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    statCard: { width: "47%", backgroundColor: theme.colors.surface, borderRadius: 8, padding: 14, borderWidth: 1, borderColor: theme.colors.border },
+    statValue: { fontSize: 20, fontWeight: "800", color: theme.colors.primaryStrong },
+    statLabel: { color: theme.colors.textMuted, marginTop: 4, fontWeight: "700", fontSize: 12 },
+    formulaText: { color: theme.colors.textSubtle, marginTop: 8, marginBottom: 8, fontSize: 12, lineHeight: 18 },
+    impactBlock: { borderTopWidth: 1, borderTopColor: theme.colors.border, paddingTop: 9, marginTop: 9 },
+    impactTitle: { color: theme.colors.text, fontWeight: "800", marginBottom: 10 },
+    impactGrid: { flexDirection: "row", flexWrap: "wrap", gap: 10 },
+    impactMetricCard: {
+      width: "47%",
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 12,
+      minHeight: 96,
+      overflow: "hidden",
+    },
+    impactAccent: {
+      width: 28,
+      height: 4,
+      borderRadius: 999,
+      marginBottom: 9,
+    },
+    impactMetricLabel: { color: theme.colors.textMuted, fontWeight: "800", fontSize: 12 },
+    impactMetricValue: { color: theme.colors.text, fontWeight: "800", fontSize: 19, marginTop: 5 },
+    impactMetricUnit: { color: theme.colors.textMuted, fontSize: 12, fontWeight: "700" },
+    impactMetricHint: { color: theme.colors.textSubtle, fontSize: 11, marginTop: 3, fontWeight: "700" },
+    achievement: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 14,
+      marginBottom: 10,
+      backgroundColor: theme.colors.surface,
+    },
+    achievementUnlocked: { borderColor: theme.colors.success, backgroundColor: theme.colors.successSoft },
+    achievementTitle: { fontWeight: "800", color: theme.colors.text, fontSize: 15 },
+    achievementDescription: { color: theme.colors.textMuted, marginTop: 4 },
+    achievementStatus: { color: theme.colors.success, marginTop: 8, fontWeight: "800" },
+    historyItem: { borderBottomWidth: 1, borderBottomColor: theme.colors.border, paddingVertical: 10 },
+    historyTitle: { color: theme.colors.text, fontWeight: "700" },
+    historyMeta: { color: theme.colors.textSubtle, marginTop: 3, fontSize: 12 },
+    factCard: {
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 14,
+      marginBottom: 10,
+      backgroundColor: theme.colors.surface,
+    },
+    helpBox: {
+      backgroundColor: theme.colors.primarySoft,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      padding: 12,
+      marginBottom: 12,
+    },
+    helpTitle: { color: theme.colors.primaryStrong, fontWeight: "800", marginBottom: 6 },
+    helpText: { color: theme.colors.textMuted, fontSize: 12, lineHeight: 18, marginTop: 4 },
+    factChipRow: { flexDirection: "row", flexWrap: "wrap", alignItems: "center", gap: 8 },
+    factChip: {
+      backgroundColor: theme.colors.primarySoft,
+      borderRadius: 999,
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+    },
+    factChipText: { color: theme.colors.primaryStrong, fontSize: 11, fontWeight: "800" },
+    factConfidence: { color: theme.colors.textMuted, fontSize: 11, fontWeight: "700" },
+    factTitle: { color: theme.colors.text, fontWeight: "800", marginTop: 10, lineHeight: 20 },
+    factMeta: { color: theme.colors.textMuted, marginTop: 6, lineHeight: 18, fontSize: 12 },
+    factActions: { flexDirection: "row", flexWrap: "wrap", gap: 8, marginTop: 12 },
+    factButton: { backgroundColor: theme.colors.surfaceMuted, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
+    factButtonText: { color: theme.colors.textMuted, fontWeight: "700", fontSize: 11 },
+    emptyText: { color: theme.colors.textSubtle, lineHeight: 20 },
+  });
