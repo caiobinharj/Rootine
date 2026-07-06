@@ -4,7 +4,7 @@ import { getLevelFromXp } from "@/lib/domain/xp";
 import { almondLeafPath, organicBlobPath, seededUnit } from "@/lib/organic-paths";
 import { useEcoStore } from "@/store/useEcoStore";
 import React from "react";
-import { StyleSheet, View } from "react-native";
+import { StyleSheet } from "react-native";
 import Svg, {
   Defs,
   G,
@@ -290,7 +290,6 @@ export default function HabitatTree({
   const treeTransform = `translate(${210 * (1 - matureScale)} ${742 * (1 - matureScale)}) scale(${matureScale})`;
 
   return (
-    <View style={styles.container}>
       <Svg
         viewBox="0 0 420 760"
         width="100%"
@@ -339,7 +338,6 @@ export default function HabitatTree({
           </G>
         ) : null}
       </Svg>
-    </View>
   );
 }
 
