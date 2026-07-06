@@ -88,6 +88,20 @@ const SAPLING_LEAVES: SmallLeaf[] = [
   { x: 297, y: 532, size: 36, rotation: 80, minLevel: 3.72, tone: "mid", seed: 79.8 },
   { x: 186, y: 450, size: 36, rotation: -30, minLevel: 3.9, tone: "light", seed: 80.2 },
   { x: 246, y: 438, size: 38, rotation: 36, minLevel: 3.95, tone: "mid", seed: 80.9 },
+  { x: 188, y: 696, size: 30, rotation: -78, minLevel: 0.38, tone: "light", seed: 81.2 },
+  { x: 238, y: 692, size: 32, rotation: 72, minLevel: 0.48, tone: "mid", seed: 81.7 },
+  { x: 207, y: 654, size: 34, rotation: -18, minLevel: 1.05, tone: "light", seed: 82.1 },
+  { x: 229, y: 638, size: 34, rotation: 32, minLevel: 1.16, tone: "mid", seed: 82.5 },
+  { x: 177, y: 642, size: 28, rotation: -62, minLevel: 1.28, tone: "mid", seed: 83.1 },
+  { x: 258, y: 626, size: 29, rotation: 66, minLevel: 1.34, tone: "light", seed: 83.8 },
+  { x: 166, y: 578, size: 30, rotation: -74, minLevel: 2.05, tone: "deep", seed: 84.1 },
+  { x: 266, y: 568, size: 32, rotation: 73, minLevel: 2.12, tone: "mid", seed: 84.7 },
+  { x: 204, y: 574, size: 31, rotation: -20, minLevel: 2.2, tone: "light", seed: 85.3 },
+  { x: 229, y: 564, size: 32, rotation: 30, minLevel: 2.28, tone: "mid", seed: 85.9 },
+  { x: 146, y: 500, size: 30, rotation: -78, minLevel: 3.08, tone: "deep", seed: 86.4 },
+  { x: 292, y: 486, size: 31, rotation: 76, minLevel: 3.14, tone: "light", seed: 87.1 },
+  { x: 174, y: 478, size: 28, rotation: -45, minLevel: 3.42, tone: "mid", seed: 87.8 },
+  { x: 260, y: 464, size: 30, rotation: 48, minLevel: 3.48, tone: "light", seed: 88.5 },
 ];
 
 const STRUCTURAL_BRANCHES: Branch[] = [
@@ -131,6 +145,17 @@ const CANOPY_CLUSTERS: CanopyCluster[] = [
   { cx: 260, cy: 464, rx: 100, ry: 74, seed: 25.44, minLevel: 9.25, tone: "deep", layer: "mid" },
   { cx: 94, cy: 430, rx: 72, ry: 58, seed: 26.35, minLevel: 10.05, tone: "dry", layer: "front" },
   { cx: 213, cy: 237, rx: 86, ry: 66, seed: 27.18, minLevel: 10.55, tone: "dry", layer: "front" },
+  { cx: 191, cy: 505, rx: 76, ry: 54, seed: 28.04, minLevel: 5.95, tone: "light", layer: "front" },
+  { cx: 223, cy: 276, rx: 128, ry: 78, seed: 28.72, minLevel: 6.35, tone: "mid", layer: "back" },
+  { cx: 76, cy: 252, rx: 82, ry: 72, seed: 29.18, minLevel: 6.85, tone: "deep", layer: "mid" },
+  { cx: 369, cy: 245, rx: 78, ry: 70, seed: 29.66, minLevel: 7.25, tone: "light", layer: "front" },
+  { cx: 154, cy: 110, rx: 78, ry: 54, seed: 30.28, minLevel: 7.8, tone: "mid", layer: "front" },
+  { cx: 278, cy: 92, rx: 74, ry: 48, seed: 30.74, minLevel: 8.35, tone: "light", layer: "front" },
+  { cx: 48, cy: 388, rx: 64, ry: 54, seed: 31.22, minLevel: 9.1, tone: "mid", layer: "front" },
+  { cx: 372, cy: 392, rx: 72, ry: 58, seed: 31.85, minLevel: 9.45, tone: "deep", layer: "front" },
+  { cx: 152, cy: 516, rx: 82, ry: 48, seed: 32.4, minLevel: 10.25, tone: "light", layer: "front" },
+  { cx: 284, cy: 520, rx: 88, ry: 52, seed: 32.95, minLevel: 10.65, tone: "mid", layer: "front" },
+  { cx: 210, cy: 43, rx: 76, ry: 42, seed: 33.28, minLevel: 11.25, tone: "light", layer: "front" },
 ];
 
 const BARK_STROKES = [
@@ -177,9 +202,41 @@ const FRUITS = [
   { x: 338, y: 312, size: 10, seed: 54.2, minLevel: 9.12 },
   { x: 95, y: 377, size: 11, seed: 54.6, minLevel: 9.24 },
   { x: 205, y: 461, size: 13, seed: 54.9, minLevel: 10.35 },
+  { x: 154, y: 242, size: 9, seed: 55.3, minLevel: 9.4 },
+  { x: 354, y: 424, size: 11, seed: 55.8, minLevel: 9.75 },
+  { x: 228, y: 120, size: 10, seed: 56.4, minLevel: 10.8 },
+  { x: 282, y: 518, size: 12, seed: 57.1, minLevel: 11.15 },
 ] as const;
 
-const LEAF_SPRIGS = Array.from({ length: 184 }, (_, index) => {
+const TRUNK_KNOTS = [
+  { x: 215, y: 584, rx: 15, ry: 10, seed: 92.1, minLevel: 4.9 },
+  { x: 242, y: 514, rx: 13, ry: 9, seed: 93.4, minLevel: 5.6 },
+  { x: 190, y: 472, rx: 12, ry: 8, seed: 94.2, minLevel: 6.2 },
+  { x: 232, y: 672, rx: 16, ry: 9, seed: 95.6, minLevel: 7.4 },
+  { x: 205, y: 364, rx: 12, ry: 8, seed: 96.9, minLevel: 8.6 },
+] as const;
+
+const MOSS_PATCHES = [
+  { x: 198, y: 652, rx: 28, ry: 11, seed: 101.1, minLevel: 5.4 },
+  { x: 263, y: 704, rx: 28, ry: 11, seed: 101.8, minLevel: 6.7 },
+  { x: 181, y: 540, rx: 24, ry: 10, seed: 102.4, minLevel: 7.5 },
+  { x: 239, y: 432, rx: 22, ry: 9, seed: 103.6, minLevel: 8.4 },
+  { x: 219, y: 319, rx: 18, ry: 8, seed: 104.3, minLevel: 10.2 },
+] as const;
+
+const VINE_PATHS = [
+  { d: "M179 706 C169 644 194 604 183 542 C174 492 195 452 187 402", minLevel: 7.7 },
+  { d: "M268 718 C249 657 270 612 255 560 C241 510 258 466 250 414", minLevel: 8.6 },
+  { d: "M212 703 C232 642 214 590 229 536 C243 488 226 450 239 395", minLevel: 10.4 },
+] as const;
+
+const SHELF_FUNGI = [
+  { x: 163, y: 634, size: 13, seed: 112.1, minLevel: 8.35 },
+  { x: 288, y: 566, size: 12, seed: 113.5, minLevel: 9.2 },
+  { x: 171, y: 438, size: 10, seed: 114.6, minLevel: 10.7 },
+] as const;
+
+const LEAF_SPRIGS = Array.from({ length: 276 }, (_, index) => {
   const cluster = CANOPY_CLUSTERS[index % CANOPY_CLUSTERS.length];
   const angle = seededUnit(cluster.seed, index + 7) * Math.PI * 2;
   const distance = Math.sqrt(seededUnit(cluster.seed, index + 21)) * 0.88;
@@ -192,6 +249,21 @@ const LEAF_SPRIGS = Array.from({ length: 184 }, (_, index) => {
     minLevel: Math.min(12, cluster.minLevel + seededUnit(cluster.seed, index + 58) * 0.62),
     tone: cluster.tone,
     seed: cluster.seed,
+  };
+});
+
+const CANOPY_ACCENTS = Array.from({ length: 48 }, (_, index) => {
+  const cluster = CANOPY_CLUSTERS[(index * 3 + 2) % CANOPY_CLUSTERS.length];
+  const angle = seededUnit(cluster.seed, index + 91) * Math.PI * 2;
+  const distance = Math.sqrt(seededUnit(cluster.seed, index + 107)) * 0.72;
+
+  return {
+    x: cluster.cx + Math.cos(angle) * cluster.rx * distance,
+    y: cluster.cy + Math.sin(angle) * cluster.ry * distance,
+    size: 5 + seededUnit(cluster.seed, index + 122) * 8,
+    rotation: -90 + seededUnit(cluster.seed, index + 144) * 180,
+    minLevel: Math.min(12, Math.max(2.6, cluster.minLevel - 0.35 + seededUnit(cluster.seed, index + 158) * 1.2)),
+    seed: cluster.seed + index * 0.07,
   };
 });
 
@@ -345,6 +417,22 @@ function SaplingTree({
           strokeLinecap="round"
           strokeWidth="8"
           opacity="0.72"
+        />
+        <Path
+          d={`M206 ${baseY - stemHeight * 0.66} C 188 ${baseY - stemHeight * 0.74} 177 ${baseY - stemHeight * 0.84} 164 ${baseY - stemHeight * 0.96}`}
+          fill="none"
+          stroke={palette.trunkLight}
+          strokeLinecap="round"
+          strokeWidth="3.8"
+          opacity="0.5"
+        />
+        <Path
+          d={`M225 ${baseY - stemHeight * 0.7} C 243 ${baseY - stemHeight * 0.8} 255 ${baseY - stemHeight * 0.9} 270 ${baseY - stemHeight * 1.02}`}
+          fill="none"
+          stroke={palette.trunkLight}
+          strokeLinecap="round"
+          strokeWidth="3.8"
+          opacity="0.5"
         />
       </G>
 
@@ -505,16 +593,72 @@ function MaturingTree({
             opacity={index % 2 === 0 ? 0.36 : 0.2}
           />
         ))}
-        <Path
-          d={organicBlobPath(205, 721, 40, 15, 62.4, 10, 0.34)}
-          fill={palette.barkMoss}
-          opacity={0.34 + ecosystem * 0.22}
-        />
-        <Path
-          d={organicBlobPath(263, 704, 28, 11, 63.8, 9, 0.4)}
-          fill={palette.barkMoss}
-          opacity={0.2 + ecosystem * 0.24}
-        />
+        {TRUNK_KNOTS.map((knot) => {
+          const visible = unlock(visualLevel, knot.minLevel, 0.62);
+          if (visible <= 0) return null;
+
+          return (
+            <G key={knot.seed} opacity={visible * 0.78}>
+              <Path
+                d={organicBlobPath(knot.x, knot.y, knot.rx, knot.ry, knot.seed, 10, 0.3)}
+                fill={palette.barkMark}
+                opacity="0.42"
+              />
+              <Path
+                d={organicBlobPath(knot.x + 2, knot.y - 1, knot.rx * 0.48, knot.ry * 0.44, knot.seed + 1, 8, 0.24)}
+                fill={palette.trunkLight}
+                opacity="0.2"
+              />
+            </G>
+          );
+        })}
+        {MOSS_PATCHES.map((patch) => {
+          const visible = unlock(visualLevel, patch.minLevel, 0.7);
+          if (visible <= 0) return null;
+
+          return (
+            <Path
+              key={patch.seed}
+              d={organicBlobPath(patch.x, patch.y, patch.rx, patch.ry, patch.seed, 10, 0.34)}
+              fill={visible > 0.62 ? palette.barkLichen : palette.barkMoss}
+              opacity={(0.22 + ecosystem * 0.22) * visible}
+            />
+          );
+        })}
+        {VINE_PATHS.map((vine) => {
+          const visible = unlock(visualLevel, vine.minLevel, 0.85);
+          if (visible <= 0) return null;
+
+          return (
+            <Path
+              key={vine.d}
+              d={vine.d}
+              fill="none"
+              stroke={palette.barkMoss}
+              strokeLinecap="round"
+              strokeWidth="4"
+              opacity={visible * 0.38}
+            />
+          );
+        })}
+        {SHELF_FUNGI.map((fungus) => {
+          const visible = unlock(visualLevel, fungus.minLevel, 0.65);
+          if (visible <= 0) return null;
+
+          return (
+            <G key={fungus.seed} opacity={visible * 0.75}>
+              <Path
+                d={organicBlobPath(fungus.x, fungus.y, fungus.size * 1.4, fungus.size * 0.54, fungus.seed, 8, 0.22)}
+                fill={palette.blossom}
+              />
+              <Path
+                d={organicBlobPath(fungus.x, fungus.y + 3, fungus.size * 1.18, fungus.size * 0.26, fungus.seed + 1, 8, 0.22)}
+                fill={palette.flowerAlt}
+                opacity="0.58"
+              />
+            </G>
+          );
+        })}
       </G>
 
       <G opacity={0.9 + unlock(visualLevel, 6.4, 1.8) * 0.08}>
@@ -540,6 +684,30 @@ function MaturingTree({
               d={almondLeafPath(leaf.x, leaf.y, leaf.size)}
               fill={leafColor(leaf.tone, palette)}
               opacity={(0.28 + visible * 0.64) * healthOpacity}
+              transform={`rotate(${leaf.rotation} ${leaf.x} ${leaf.y})`}
+            />
+          );
+        })}
+      </G>
+
+      <G opacity={0.74}>
+        {CANOPY_ACCENTS.map((leaf, index) => {
+          const visible = unlock(visualLevel, leaf.minLevel, 0.52);
+          if (visible <= 0) return null;
+          const color = index % 4 === 0
+            ? palette.barkLichen
+            : index % 4 === 1
+              ? palette.canopyLight
+              : index % 4 === 2
+                ? palette.flowerAlt
+                : palette.blossom;
+
+          return (
+            <Path
+              key={`${leaf.seed}-${index}`}
+              d={almondLeafPath(leaf.x, leaf.y, leaf.size)}
+              fill={color}
+              opacity={visible * (index % 4 >= 2 ? 0.26 : 0.34)}
               transform={`rotate(${leaf.rotation} ${leaf.x} ${leaf.y})`}
             />
           );
@@ -771,6 +939,7 @@ function buildTreePalette(theme: RootineTheme, vitalityScore: number) {
     branchUnderside: theme.mode === "dark" ? habitat.forestShadow : habitat.barkMark,
     barkMark: habitat.barkMark,
     barkMoss: habitat.barkMoss,
+    barkLichen: habitat.barkLichen,
     groundShadow: habitat.forestShadow,
     canopyDeep: habitat.canopyDeep,
     canopyMid: stressed ? habitat.forestDeep : habitat.canopyMid,

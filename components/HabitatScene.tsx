@@ -1,5 +1,13 @@
-import React from "react";
-import { ActivityIndicator, StyleSheet, Text, useWindowDimensions, View } from "react-native";
+import React, { useEffect, useMemo } from "react";
+import {
+  ActivityIndicator,
+  Animated,
+  Easing,
+  StyleSheet,
+  Text,
+  useWindowDimensions,
+  View,
+} from "react-native";
 import Svg, {
   Defs,
   G,
@@ -98,14 +106,38 @@ const SKY_SPARKS = Array.from({ length: 46 }, (_, index) => {
   };
 });
 
-const GROUND_BLOOMS = Array.from({ length: 36 }, (_, index) => {
+const GROUND_BLOOMS = Array.from({ length: 58 }, (_, index) => {
   const seed = 310 + index * 2.6;
   return {
     x: 18 + seededUnit(seed, 1) * 354,
     y: 678 + seededUnit(seed, 2) * 64,
     size: 4 + seededUnit(seed, 3) * 5,
     seed,
-    minLevel: index < 18 ? 6.62 : index < 30 ? 9.45 : 10.8,
+    minLevel: index < 14 ? 3.4 : index < 32 ? 6.62 : index < 48 ? 9.45 : 10.8,
+  };
+});
+
+const MEADOW_PATCHES = [
+  { x: 48, y: 666, rx: 78, ry: 22, seed: 410.1, color: "meadowGold", minLevel: 2.2, opacity: 0.16 },
+  { x: 318, y: 648, rx: 92, ry: 24, seed: 411.3, color: "meadowRose", minLevel: 3.1, opacity: 0.12 },
+  { x: 178, y: 694, rx: 96, ry: 18, seed: 412.7, color: "meadowBlue", minLevel: 4.4, opacity: 0.12 },
+  { x: 74, y: 716, rx: 68, ry: 16, seed: 413.8, color: "meadowRose", minLevel: 6.8, opacity: 0.14 },
+  { x: 308, y: 708, rx: 72, ry: 18, seed: 414.9, color: "meadowGold", minLevel: 8.6, opacity: 0.18 },
+] as const;
+
+const DRIFTING_LEAVES = Array.from({ length: 12 }, (_, index) => {
+  const seed = 520 + index * 3.17;
+  return {
+    seed,
+    top: 122 + seededUnit(seed, 1) * 470,
+    left: -42 + seededUnit(seed, 2) * 460,
+    size: 5 + seededUnit(seed, 3) * 8,
+    distance: 24 + seededUnit(seed, 4) * 62,
+    lift: -18 + seededUnit(seed, 5) * 36,
+    delay: seededUnit(seed, 6) * 5200,
+    duration: 13000 + seededUnit(seed, 7) * 9000,
+    colorIndex: index % 3,
+    opacity: 0.14 + seededUnit(seed, 8) * 0.26,
   };
 });
 
@@ -141,6 +173,7 @@ export function HabitatScene({
       </View>
 
       <HabitatForeground visualLevel={visualLevel} />
+      <FloatingLeafParticles />
 
       <View style={styles.sceneFooter}>
         <Text style={styles.vitalityText}>Vitalidade {vitalityLabel}</Text>
@@ -191,13 +224,31 @@ function HabitatPainterlyBackdrop({ visualLevel }: { visualLevel: number }) {
             <Stop offset="0.42" stopColor={habitat.firefly} stopOpacity="0.2" />
             <Stop offset="1" stopColor={habitat.firefly} stopOpacity="0" />
           </RadialGradient>
+          <RadialGradient id="habitat-nebula-rose" cx="50%" cy="50%" r="64%">
+            <Stop offset="0" stopColor={habitat.nebulaRose} stopOpacity="1" />
+            <Stop offset="0.58" stopColor={habitat.nebulaRose} stopOpacity="0.42" />
+            <Stop offset="1" stopColor={habitat.nebulaRose} stopOpacity="0" />
+          </RadialGradient>
+          <RadialGradient id="habitat-nebula-violet" cx="50%" cy="50%" r="68%">
+            <Stop offset="0" stopColor={habitat.nebulaViolet} stopOpacity="1" />
+            <Stop offset="0.54" stopColor={habitat.nebulaViolet} stopOpacity="0.38" />
+            <Stop offset="1" stopColor={habitat.nebulaViolet} stopOpacity="0" />
+          </RadialGradient>
+          <RadialGradient id="habitat-nebula-blue" cx="50%" cy="50%" r="70%">
+            <Stop offset="0" stopColor={habitat.nebulaBlue} stopOpacity="1" />
+            <Stop offset="0.56" stopColor={habitat.nebulaBlue} stopOpacity="0.36" />
+            <Stop offset="1" stopColor={habitat.nebulaBlue} stopOpacity="0" />
+          </RadialGradient>
         </Defs>
 
         <Rect width="390" height="760" fill="url(#habitat-sky)" />
         <Rect width="390" height="760" fill={isDark ? "url(#habitat-moon-glow)" : "url(#habitat-solar-glow)"} />
 
         {isDark ? (
-          <NightSky />
+          <G>
+            <NightNebulae />
+            <NightSky />
+          </G>
         ) : (
           <G>
             <Path
@@ -323,6 +374,19 @@ function UnderstoryLayer({ visualLevel }: { visualLevel: number }) {
         fill={habitat.grass}
         opacity={isDark ? 0.36 + ecosystem * 0.18 : 0.32 + ecosystem * 0.2}
       />
+      {MEADOW_PATCHES.map((patch) => {
+        const visible = unlock(visualLevel, patch.minLevel, 0.8);
+        if (visible <= 0) return null;
+
+        return (
+          <Path
+            key={patch.seed}
+            d={organicBlobPath(patch.x, patch.y, patch.rx, patch.ry, patch.seed, 12, 0.44)}
+            fill={habitat[patch.color]}
+            opacity={visible * (isDark ? patch.opacity * 0.72 : patch.opacity)}
+          />
+        );
+      })}
       {FERN_FRONDS.slice(0, 17).map((fern) => (
         <Fern
           key={fern.seed}
@@ -413,7 +477,17 @@ function HabitatForeground({ visualLevel }: { visualLevel: number }) {
             return (
               <GroundBloom
                 key={bloom.seed}
-                color={index % 3 === 0 ? habitat.blossom : index % 3 === 1 ? habitat.flower : habitat.flowerAlt}
+                color={
+                  index % 5 === 0
+                    ? habitat.meadowBlue
+                    : index % 5 === 1
+                      ? habitat.meadowRose
+                      : index % 5 === 2
+                        ? habitat.meadowGold
+                        : index % 5 === 3
+                          ? habitat.flower
+                          : habitat.flowerAlt
+                }
                 opacity={visible * (0.52 + reference * 0.22)}
                 seed={bloom.seed}
                 size={bloom.size}
@@ -430,6 +504,36 @@ function HabitatForeground({ visualLevel }: { visualLevel: number }) {
         />
       </Svg>
     </View>
+  );
+}
+
+function NightNebulae() {
+  return (
+    <G opacity="0.92">
+      <Path
+        d={organicBlobPath(118, 118, 98, 42, 602.1, 15, 0.58)}
+        fill="url(#habitat-nebula-violet)"
+        transform="rotate(-14 118 118)"
+      />
+      <Path
+        d={organicBlobPath(253, 92, 116, 46, 603.7, 15, 0.56)}
+        fill="url(#habitat-nebula-blue)"
+        transform="rotate(11 253 92)"
+      />
+      <Path
+        d={organicBlobPath(205, 174, 138, 38, 604.8, 16, 0.62)}
+        fill="url(#habitat-nebula-rose)"
+        transform="rotate(-7 205 174)"
+      />
+      <Path
+        d="M58 176 C120 132 194 138 255 109 C302 86 342 84 391 96"
+        fill="none"
+        stroke="url(#habitat-nebula-blue)"
+        strokeLinecap="round"
+        strokeWidth="18"
+        opacity="0.34"
+      />
+    </G>
   );
 }
 
@@ -549,6 +653,95 @@ function Fern({
     </G>
   );
 }
+
+function FloatingLeafParticles() {
+  const { theme } = useRootineTheme();
+  const animations = useMemo(
+    () => DRIFTING_LEAVES.map(() => new Animated.Value(0)),
+    [],
+  );
+
+  useEffect(() => {
+    const loops = animations.map((value, index) => {
+      const particle = DRIFTING_LEAVES[index];
+      value.setValue(0);
+      const loop = Animated.loop(
+        Animated.timing(value, {
+          toValue: 1,
+          duration: particle.duration,
+          delay: particle.delay,
+          easing: Easing.inOut(Easing.sin),
+          useNativeDriver: true,
+          isInteraction: false,
+        }),
+      );
+      loop.start();
+      return loop;
+    });
+
+    return () => {
+      loops.forEach((loop) => loop.stop());
+    };
+  }, [animations]);
+
+  const colors = [
+    theme.habitat.leafDriftA,
+    theme.habitat.leafDriftB,
+    theme.habitat.canopyLight,
+  ];
+
+  return (
+    <View pointerEvents="none" style={StyleSheet.absoluteFill}>
+      {DRIFTING_LEAVES.map((leaf, index) => {
+        const progress = animations[index];
+        const translateX = progress.interpolate({
+          inputRange: [0, 0.52, 1],
+          outputRange: [0, leaf.distance * 0.42, leaf.distance],
+        });
+        const translateY = progress.interpolate({
+          inputRange: [0, 0.45, 1],
+          outputRange: [0, leaf.lift, leaf.lift * 0.25],
+        });
+        const rotate = progress.interpolate({
+          inputRange: [0, 1],
+          outputRange: [`${-18 + leaf.seed % 18}deg`, `${34 + leaf.seed % 44}deg`],
+        });
+        const opacity = progress.interpolate({
+          inputRange: [0, 0.14, 0.78, 1],
+          outputRange: [0, leaf.opacity, leaf.opacity, 0],
+        });
+
+        return (
+          <Animated.View
+            key={leaf.seed}
+            style={[
+              particleStyles.leafParticle,
+              {
+                top: leaf.top,
+                left: leaf.left,
+                width: leaf.size * 1.45,
+                height: leaf.size,
+                backgroundColor: colors[leaf.colorIndex],
+                opacity,
+                transform: [{ translateX }, { translateY }, { rotate }],
+              },
+            ]}
+          />
+        );
+      })}
+    </View>
+  );
+}
+
+const particleStyles = StyleSheet.create({
+  leafParticle: {
+    position: "absolute",
+    borderTopLeftRadius: 999,
+    borderBottomRightRadius: 999,
+    borderTopRightRadius: 6,
+    borderBottomLeftRadius: 6,
+  },
+});
 
 function distantTrunkPath(tree: DistantTree) {
   const topX = tree.x + tree.lean;
