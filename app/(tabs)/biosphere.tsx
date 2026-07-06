@@ -38,6 +38,34 @@ interface BiospherePost {
   created_at: string;
 }
 
+type ImpactTotals = {
+  co2_kg: number;
+  water_l: number;
+  waste_g: number;
+  energy_kwh: number;
+};
+
+interface CommunityImpact {
+  participant_count: number;
+  ledger_count: number;
+  community_totals: ImpactTotals;
+  user_totals: ImpactTotals;
+  user_rank: number | null;
+  user_percentile: number;
+  comparisons?: {
+    community?: {
+      water_person_days?: number;
+      waste_kg?: number;
+      led_10w_hours?: number;
+    };
+    user?: {
+      water_person_days?: number;
+      waste_kg?: number;
+      led_10w_hours?: number;
+    };
+  };
+}
+
 function cleanFeedText(value: unknown) {
   return String(value ?? "")
     .replace(/&amp;/g, "&")
@@ -79,6 +107,43 @@ function postTypeLabel(type: BiospherePost["post_type"]) {
   return "Comunidade";
 }
 
+function formatImpactValue(value: number, digits = 1) {
+  return Number(value || 0).toLocaleString("pt-BR", {
+    maximumFractionDigits: digits,
+  });
+}
+
+function formatImpactTotals(totals: ImpactTotals) {
+  return `${formatImpactValue(totals.water_l)}L de água, ${formatImpactValue(totals.co2_kg, 2)}kg de CO2, ${formatImpactValue(totals.waste_g)}g de resíduos e ${formatImpactValue(totals.energy_kwh, 2)}kWh`;
+}
+
+function hasImpactTotals(totals: ImpactTotals | null | undefined) {
+  return Boolean(
+    totals &&
+      (
+        Number(totals.water_l || 0) > 0 ||
+        Number(totals.co2_kg || 0) > 0 ||
+        Number(totals.waste_g || 0) > 0 ||
+        Number(totals.energy_kwh || 0) > 0
+      ),
+  );
+}
+
+function buildImpactPerspective(impact: CommunityImpact | null) {
+  if (!impact || impact.participant_count <= 0) return "";
+  const percentile = Math.max(0, Math.min(99, impact.user_percentile || 0));
+  const userDays = impact.comparisons?.user?.water_person_days ?? 0;
+  const communityTotals = formatImpactTotals(impact.community_totals);
+  const rankText = impact.user_rank
+    ? `posição ${impact.user_rank} entre ${impact.participant_count} participantes`
+    : `${impact.participant_count} participantes com impacto registrado`;
+  const waterText = userDays >= 1
+    ? ` e equivale a cerca de ${formatImpactValue(userDays)} dia(s) de referência pessoal de água`
+    : "";
+
+  return ` Isso fica acima de ${percentile}% da comunidade Rootine (${rankText})${waterText}. Juntos, os usuários já registraram ${communityTotals}.`;
+}
+
 export default function BiosphereScreen() {
   const { theme } = useRootineTheme();
   const styles = useMemo(() => createStyles(theme), [theme]);
@@ -91,6 +156,7 @@ export default function BiosphereScreen() {
   const [posting, setPosting] = useState(false);
   const [feedError, setFeedError] = useState<string | null>(null);
   const [communityError, setCommunityError] = useState<string | null>(null);
+  const [communityImpact, setCommunityImpact] = useState<CommunityImpact | null>(null);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [postTitle, setPostTitle] = useState("");
   const [postBody, setPostBody] = useState("");
@@ -156,10 +222,35 @@ export default function BiosphereScreen() {
     }
   }, []);
 
+  const loadCommunityImpact = useCallback(async () => {
+    try {
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (!user) return null;
+
+      const { data, error } = await supabase.functions.invoke("community-impact", {
+        body: { userId: user.id },
+      });
+
+      if (error || data?.error) {
+        throw error ?? new Error(String(data?.error));
+      }
+
+      const freshImpact = data as CommunityImpact;
+      setCommunityImpact(freshImpact);
+      return freshImpact;
+    } catch (error) {
+      console.warn("[BIOSPHERE] Impacto comunitário indisponível:", error);
+      return null;
+    }
+  }, []);
+
   useEffect(() => {
     loadFeed();
     loadCommunity();
-  }, [loadCommunity, loadFeed]);
+    loadCommunityImpact();
+  }, [loadCommunity, loadCommunityImpact, loadFeed]);
 
   const authorName = useCallback(async () => {
     const {
@@ -181,14 +272,9 @@ export default function BiosphereScreen() {
 
   const publishPost = async (type: BiospherePost["post_type"] = "community") => {
     if (posting) return;
-    const title = type === "impact_milestone"
-      ? "Marco de impacto compartilhado"
-      : postTitle.trim();
-    const body = type === "impact_milestone"
-      ? `Meu impacto estimado chegou a ${impactTotals.water_l}L de água, ${impactTotals.co2_kg}kg de CO2, ${impactTotals.waste_g}g de resíduos e ${impactTotals.energy_kwh}kWh de energia registrados.`
-      : postBody.trim();
+    const title = type === "impact_milestone" ? "Marco de impacto compartilhado" : postTitle.trim();
 
-    if (!title || !body) {
+    if (type !== "impact_milestone" && (!title || !postBody.trim())) {
       setCommunityError("Escreva um título e uma mensagem antes de publicar.");
       return;
     }
@@ -197,13 +283,40 @@ export default function BiosphereScreen() {
     setCommunityError(null);
     try {
       const author = await authorName();
+      const freshCommunityImpact = type === "impact_milestone"
+        ? await loadCommunityImpact()
+        : communityImpact;
+      const impactContext = freshCommunityImpact ?? communityImpact;
+      const userImpactTotals = type === "impact_milestone" && hasImpactTotals(impactContext?.user_totals)
+        ? impactContext!.user_totals
+        : impactTotals;
+      const body = type === "impact_milestone"
+        ? `Meu impacto estimado chegou a ${formatImpactTotals(userImpactTotals)} registrados.${buildImpactPerspective(impactContext)}`
+        : postBody.trim();
+
+      if (type === "impact_milestone" && !hasImpactTotals(userImpactTotals)) {
+        throw new Error("Ainda não encontrei impacto registrado para compartilhar. Recarregue o perfil ou conclua uma missão com impacto antes de publicar.");
+      }
+
       const { error } = await supabase.from("biosphere_posts").insert({
         user_id: author.userId,
         author_name: author.name,
         post_type: type,
         title,
         body,
-        impact_snapshot: type === "impact_milestone" ? impactTotals : {},
+        impact_snapshot: type === "impact_milestone"
+          ? {
+            ...userImpactTotals,
+            community_context: impactContext
+              ? {
+                user_percentile: impactContext.user_percentile,
+                user_rank: impactContext.user_rank,
+                participant_count: impactContext.participant_count,
+                community_totals: impactContext.community_totals,
+              }
+              : null,
+          }
+          : {},
         visibility: "public",
       });
 
@@ -211,7 +324,7 @@ export default function BiosphereScreen() {
       setPostTitle("");
       setPostBody("");
       console.log("[BIOSPHERE] Post publicado.", { postType: type });
-      await loadCommunity();
+      await Promise.all([loadCommunity(), loadCommunityImpact()]);
     } catch (error) {
       console.error("[BIOSPHERE] Erro ao publicar:", error);
       setCommunityError(error instanceof Error ? error.message : "Não foi possível publicar agora.");
@@ -276,7 +389,12 @@ export default function BiosphereScreen() {
         refreshControl={
           <RefreshControl
             refreshing={activeTab === "community" ? loadingCommunity : loadingFeed}
-            onRefresh={activeTab === "community" ? loadCommunity : loadFeed}
+            onRefresh={activeTab === "community"
+              ? () => {
+                loadCommunity();
+                loadCommunityImpact();
+              }
+              : loadFeed}
             tintColor={theme.colors.primary}
           />
         }
@@ -311,6 +429,21 @@ export default function BiosphereScreen() {
 
         {activeTab === "community" && (
           <View style={styles.section}>
+            {communityImpact ? (
+              <View style={styles.impactSummary}>
+                <Text style={styles.impactSummaryLabel}>Impacto agregado do Rootine</Text>
+                <Text style={styles.impactSummaryValue}>
+                  {formatImpactTotals(communityImpact.community_totals)}
+                </Text>
+                <Text style={styles.impactSummaryMeta}>
+                  {communityImpact.participant_count} participantes com impacto registrado
+                  {communityImpact.user_rank
+                    ? ` • você está acima de ${communityImpact.user_percentile}% da comunidade`
+                    : ""}
+                </Text>
+              </View>
+            ) : null}
+
             <View style={styles.composer}>
               <Text style={styles.sectionHint}>Compartilhe um marco, aprendizado ou convite simples.</Text>
               <TextInput
@@ -366,8 +499,8 @@ export default function BiosphereScreen() {
 
         {activeTab === "events" && (
           <View style={styles.section}>
-            <Text style={styles.sectionHint}>Eventos encontrados via Google Notícias (Niterói / RJ).</Text>
-            {renderFeedCards(events, "Nenhum evento recente encontrado para a região.")}
+            <Text style={styles.sectionHint}>Eventos ambientais em Niterói/RJ com sinal de inscrição aberta.</Text>
+            {renderFeedCards(events, "Nenhum evento com inscrição aberta encontrado agora.")}
           </View>
         )}
 
@@ -409,6 +542,35 @@ const createStyles = (theme: RootineTheme) =>
     tabTextActive: { color: theme.colors.textOnPrimary },
     section: { marginTop: 18, gap: 12, paddingHorizontal: 20 },
     sectionHint: { color: theme.colors.textSubtle, fontSize: 12, marginBottom: 4, lineHeight: 18 },
+    impactSummary: {
+      backgroundColor: theme.colors.surfaceRaised,
+      borderRadius: 8,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderLeftWidth: 4,
+      borderLeftColor: theme.colors.primary,
+      gap: 5,
+    },
+    impactSummaryLabel: {
+      color: theme.colors.primaryStrong,
+      fontSize: 11,
+      fontWeight: "800",
+      textTransform: "uppercase",
+      letterSpacing: 0,
+    },
+    impactSummaryValue: {
+      color: theme.colors.text,
+      fontSize: 16,
+      fontWeight: "800",
+      lineHeight: 22,
+    },
+    impactSummaryMeta: {
+      color: theme.colors.textMuted,
+      fontSize: 12,
+      lineHeight: 18,
+      fontWeight: "700",
+    },
     composer: {
       backgroundColor: theme.colors.surfaceRaised,
       borderRadius: 8,

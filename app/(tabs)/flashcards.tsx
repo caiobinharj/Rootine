@@ -29,6 +29,7 @@ type ScreenState =
 interface QuizOption {
   id: string;
   text: string;
+  feedback?: string;
 }
 
 interface TrailQuiz {
@@ -41,6 +42,15 @@ interface TrailQuiz {
   category: string;
   difficulty?: number;
   signal_key?: string;
+  composer?: "ai" | "deterministic_fallback";
+  fallback_reason?: string | null;
+  fallback_detail?: string | null;
+  ai_provider?: string | null;
+  ai_model?: string | null;
+  validation_issues?: string[];
+  adaptive_focus?: "reinforce_weak" | "challenge_strong" | "explore";
+  adaptive_focus_reason?: string;
+  target_difficulty?: number;
 }
 
 export default function FlashcardsTab() {
@@ -57,6 +67,7 @@ export default function FlashcardsTab() {
   const [flashcardRenderKey, setFlashcardRenderKey] = useState(0);
   const isInitialized = useRef(false);
   const completingBatchIdsRef = useRef<Set<string>>(new Set());
+  const quizPrefetchPromiseRef = useRef<Promise<void> | null>(null);
 
   const {
     currentBatch,
@@ -197,7 +208,7 @@ export default function FlashcardsTab() {
     setTimeout(() => setScreenState("no_batch"), 3000);
   }, []);
 
-  const handleRequestBatch = useCallback(async () => {
+	  const handleRequestBatch = useCallback(async () => {
     if (!userId) {
       console.log("[ADVENTURE] handleRequestBatch: userId ainda null");
       return;
@@ -225,23 +236,79 @@ export default function FlashcardsTab() {
       console.log("[ADVENTURE] requestNewBatch falhou ou não retornou batch -> NO_BATCH");
       setScreenState("no_batch");
     }
-  }, [userId, requestNewBatch]);
+	  }, [userId, requestNewBatch]);
 
-  const handleGenerateQuiz = useCallback(async () => {
-    if (!userId || quizLoading) return;
-    setQuizLoading(true);
-    setQuizResult(null);
-    try {
-      const { data, error } = await supabase.functions.invoke("generate-quiz", {
-        body: { userId },
-      });
+	  const prefetchQuiz = useCallback(() => {
+	    if (!userId || quizPrefetchPromiseRef.current) return quizPrefetchPromiseRef.current;
+	    const promise = supabase.functions
+	      .invoke("generate-quiz", {
+	        body: { userId, prefetchOnly: true },
+	      })
+	      .then(({ data, error }) => {
+	        if (error || data?.error) {
+	          console.warn("[ADVENTURE] Prefetch de quiz indisponível:", error ?? data?.error);
+	          return;
+	        }
+	        console.log("[ADVENTURE] Quiz em cache:", {
+	          message: data?.message,
+	          quizId: data?.quiz_id,
+	          source: data?.composer ?? "cache",
+	        });
+	      })
+	      .catch((error) => {
+	        console.warn("[ADVENTURE] Falha no prefetch de quiz:", error);
+	      })
+	      .finally(() => {
+	        quizPrefetchPromiseRef.current = null;
+	      });
+	    quizPrefetchPromiseRef.current = promise;
+	    return promise;
+	  }, [userId]);
+
+	  useEffect(() => {
+	    prefetchQuiz();
+	  }, [prefetchQuiz]);
+
+	  const handleGenerateQuiz = useCallback(async () => {
+	    if (!userId || quizLoading) return;
+	    setQuizLoading(true);
+	    setQuizResult(null);
+	    try {
+	      if (quizPrefetchPromiseRef.current) {
+	        await quizPrefetchPromiseRef.current;
+	      }
+	      const { data, error } = await supabase.functions.invoke("generate-quiz", {
+	        body: { userId },
+	      });
       if (error) throw error;
       if (data?.error || !data?.quiz?.quiz_question_id) {
         throw new Error(String(data?.error ?? "Quiz sem origem rastreável."));
       }
-      setQuiz(data.quiz);
-      setSelectedOption(null);
-    } catch (error) {
+      const generationDebug = {
+        source: data?.composer ?? data?.quiz?.composer ?? "unknown",
+        fallbackReason: data?.fallback_reason ?? data?.quiz?.fallback_reason ?? null,
+        fallbackDetail: data?.fallback_detail ?? data?.quiz?.fallback_detail ?? null,
+        aiProvider: data?.ai_provider ?? data?.quiz?.ai_provider ?? null,
+        aiModel: data?.ai_model ?? data?.quiz?.ai_model ?? null,
+        validationIssues: data?.validation_issues ?? data?.quiz?.validation_issues ?? [],
+        focus: data?.focus ?? {
+          mode: data?.quiz?.adaptive_focus,
+          reason: data?.quiz?.adaptive_focus_reason,
+          targetDifficulty: data?.quiz?.target_difficulty,
+          category: data?.quiz?.category,
+        },
+        algorithm: data?.algorithm,
+        quizQuestionId: data?.quiz?.quiz_question_id,
+      };
+      if (generationDebug.source === "deterministic_fallback") {
+        console.warn("[ADVENTURE] Quiz via fallback determinístico", generationDebug);
+      } else {
+        console.log("[ADVENTURE] Quiz gerado com IA", generationDebug);
+	      }
+	      setQuiz(data.quiz);
+	      setSelectedOption(null);
+	      setTimeout(() => prefetchQuiz(), 0);
+	    } catch (error) {
       console.error("[ADVENTURE] Erro ao gerar quiz:", error);
       const detail = error instanceof Error ? error.message : String(error);
       setSelectedOption(null);
@@ -251,10 +318,10 @@ export default function FlashcardsTab() {
     } finally {
       setQuizLoading(false);
     }
-  }, [quizLoading, userId]);
+	  }, [prefetchQuiz, quizLoading, userId]);
 
-  const handleAnswerQuiz = useCallback(
-    async (optionId: string) => {
+	  const handleAnswerQuiz = useCallback(
+	    async (optionId: string) => {
       if (!userId || !quiz || quizResult || quizSaving) return;
 
       setQuizSaving(true);
@@ -291,11 +358,20 @@ export default function FlashcardsTab() {
             console.error("[BRAIN] Sync quiz da Aventura error:", syncError);
           });
 
-        setQuizResult(
-          correct
-            ? `Resposta correta. ${quiz.explanation}`
-            : `Resposta para revisar. A correta era ${quiz.correct_option}. ${quiz.explanation}`,
-        );
+	        const selectedFeedback = quiz.options.find((option) => option.id === optionId)?.feedback;
+	        const correctFeedback = quiz.options.find((option) => option.id === quiz.correct_option)?.feedback;
+	        setQuizResult(
+	          correct
+	            ? [
+	              "Resposta Correta",
+	              selectedFeedback || correctFeedback || quiz.explanation,
+	            ].join("\n")
+	            : [
+	              "Resposta Incorreta",
+	              `Por que sua escolha não era a mais apropriada: ${selectedFeedback || "ela deixava de fora o mecanismo central da pergunta."}`,
+	              `Melhor resposta: ${quiz.correct_option}. ${correctFeedback || quiz.explanation}`,
+	            ].join("\n"),
+	        );
       } catch (error) {
         console.error("[ADVENTURE] Erro ao salvar resposta do quiz:", error);
         const detail = error instanceof Error ? error.message : String(error);
@@ -331,7 +407,7 @@ export default function FlashcardsTab() {
         <Text style={styles.quizBadge}>XP diário</Text>
       </View>
       <Text style={styles.quizSubtitle}>
-        Uma pergunta curta para reforçar seu perfil sem usar IA no fluxo.
+        Uma pergunta curta adaptada ao seu histórico recente, com alternativas equilibradas.
       </Text>
 
       {!quiz ? (

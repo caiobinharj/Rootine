@@ -59,6 +59,7 @@ export default function MissionsScreen() {
             description={item.description}
             category={item.ai_justification?.category || "general"}
             justification={item.ai_justification?.reason || ""}
+            helpText={item.ai_justification?.help_text || null}
             expiresAt={item.expires_at}
             xp={item.xp_reward ?? (item.mission_type === "specialized" ? 25 : 10)}
           />

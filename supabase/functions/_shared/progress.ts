@@ -609,7 +609,8 @@ async function achievementMetrics(supabaseAdmin: SupabaseLike, userId: string) {
     supabaseAdmin
       .from("user_missions")
       .select("id, status, category, difficulty, completed_at")
-      .eq("user_id", userId),
+      .eq("user_id", userId)
+      .eq("delivery_status", "delivered"),
     supabaseAdmin
       .from("user_profile_events")
       .select("event_type, source, payload, occurred_at")

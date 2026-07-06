@@ -232,6 +232,7 @@ export default function AdventureScreen() {
             justification={
               item.personalization_reason || item.ai_justification?.reason || ""
             }
+            helpText={item.ai_justification?.help_text || null}
             expiresAt={item.expires_at}
             xp={item.xp_reward ?? (item.mission_type === "specialized" ? 25 : 10)}
           />

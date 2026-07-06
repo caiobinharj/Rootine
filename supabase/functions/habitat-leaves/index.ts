@@ -55,6 +55,7 @@ serve(async (req: Request) => {
         .from("user_missions")
         .select("title, description, status, ai_justification, created_at")
         .eq("user_id", userId)
+        .eq("delivery_status", "delivered")
         .order("created_at", { ascending: false })
         .limit(8),
       supabaseAdmin

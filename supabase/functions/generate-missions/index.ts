@@ -1,5 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
-import { allowedCategories, logAgentInteraction, runJsonAgent } from "../_shared/agents.ts";
+import { allowedCategories, configuredSecret, logAgentInteraction, runJsonAgent } from "../_shared/agents.ts";
 import {
   corsHeaders,
   createSupabaseAdmin,
@@ -15,7 +15,13 @@ const HARD_REPEAT_DAYS = 3;
 const HARD_REPEAT_MISSION_LIMIT = 12;
 const MAX_ACTIVE_MISSIONS = 4;
 const MAX_AI_BLUEPRINTS = 8;
-const MAX_AI_CANDIDATES = 2;
+const MIN_AI_CANDIDATES = 3;
+const MAX_AI_CANDIDATES = 4;
+const MISSION_HELP_MAX_CHARS = 680;
+const MISSION_CACHE_TTL_HOURS = 6;
+const DEFAULT_OPENAI_MODEL = "gpt-4.1-mini";
+const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 
 const COST_ORDER = ["free", "low", "medium", "high"] as const;
 const XP_REWARD_BY_DIFFICULTY: Record<number, number> = {
@@ -70,6 +76,7 @@ interface MissionCandidate {
   cost_level: string;
   used_fact_keys: string[];
   personalization_reason: string;
+  help_text: string;
   expected_impact: Record<string, unknown>;
   pattern_key: string;
   action_fingerprint: string;
@@ -214,7 +221,7 @@ async function findMissionByGenerationRequest(
 
   const { data, error } = await supabaseAdmin
     .from("user_missions")
-    .select("id, status, mission_type, category, pattern_key, action_fingerprint")
+    .select("id, status, mission_type, category, pattern_key, action_fingerprint, generation_snapshot")
     .eq("user_id", userId)
     .eq("generation_request_id", generationRequestId)
     .maybeSingle();
@@ -756,34 +763,42 @@ function hasPositiveImpact(impact: Record<string, any>) {
 
 function hasConcreteActionLanguage(value: string) {
   const text = normalizeText(value);
-  return [
-    "acompanhe",
-    "ajuste",
-    "anote",
-    "avalie",
-    "busque",
-    "calcule",
-    "confira",
-    "considere",
-    "compare",
-    "crie",
-    "defina",
-    "desligue",
-    "dispense",
-    "encaminhe",
-    "escolha",
-    "estime",
-    "evite",
-    "feche",
-    "identifique",
-    "liste",
-    "meca",
-    "monte",
-    "observe",
-    "olhe",
-    "organize",
-    "pegue",
-    "planeje",
+	return [
+	  "acompanhe",
+	  "ajuste",
+	  "anote",
+	  "avalie",
+	  "busque",
+	  "calcule",
+	  "combine",
+	  "compartilhe",
+	  "confira",
+	  "considere",
+	  "compare",
+	  "converse",
+	  "crie",
+	  "defina",
+	  "desligue",
+	  "dispense",
+	  "encaminhe",
+	  "escolha",
+	  "estabeleca",
+	  "estime",
+	  "evite",
+	  "feche",
+	  "identifique",
+	  "liste",
+	  "mapa",
+	  "mapeie",
+	  "marque",
+	  "meca",
+	  "monte",
+	  "negocie",
+	  "observe",
+	  "olhe",
+	  "organize",
+	  "pegue",
+	  "planeje",
     "prefira",
     "prepare",
     "priorize",
@@ -793,13 +808,14 @@ function hasConcreteActionLanguage(value: string) {
     "registre",
     "reduza",
     "remova",
-    "reuna",
-    "revise",
-    "separe",
-    "substitua",
-    "teste",
-    "troque",
-    "use",
+	  "reuna",
+	  "revise",
+	  "separe",
+	  "sinalize",
+	  "substitua",
+	  "teste",
+	  "troque",
+	  "use",
     "veja",
     "verifique",
   ].some((verb) => text.includes(verb));
@@ -823,26 +839,48 @@ function hasSustainabilityFollowThrough(value: string) {
   if (!isDiscoveryOnlyRisk) return true;
 
   return [
-    "armazene",
-    "consuma",
-    "criterio",
-    "defina",
-    "destino",
-    "doe",
-    "encaminhe",
-    "escolha",
-    "evitar descarte",
-    "guarde",
-    "planeje",
-    "prioridade",
-    "proxima refeicao",
-    "reaproveite",
-    "reduzir descarte",
-    "regra",
-    "repare",
-    "substitua",
-    "use",
-  ].some((term) => text.includes(term));
+	  "armazene",
+	  "carona",
+	  "combine",
+	  "combinado",
+	  "compartilhado",
+	  "compartilhe",
+	  "consuma",
+	  "criterio",
+	  "defina",
+	  "destino",
+	  "doe",
+	  "encaminhe",
+	  "escolha",
+	  "evite desperdicio",
+	  "evitar descarte",
+	  "guarde",
+	  "nao usado",
+	  "planeje",
+	  "prioridade",
+	  "proxima refeicao",
+	  "reaproveite",
+	  "reduzir descarte",
+	  "regra",
+	  "repare",
+	  "rota compartilhada",
+	  "substitua",
+	  "use",
+	].some((term) => text.includes(term));
+}
+
+function summarizeValidationErrors(validationErrors: unknown[]) {
+  const counts: Record<string, number> = {};
+
+  for (const entry of validationErrors) {
+    const errors = stringArray(asObject(entry).errors);
+    for (const error of errors) counts[error] = (counts[error] ?? 0) + 1;
+  }
+
+  return Object.entries(counts)
+    .sort((left, right) => right[1] - left[1])
+    .slice(0, 6)
+    .map(([error, count]) => ({ error, count }));
 }
 
 function validateCandidate(
@@ -875,6 +913,12 @@ function validateCandidate(
   if (!candidate.personalization_reason || candidate.personalization_reason.trim().length < 20) {
     errors.push("personalization_reason_required");
   }
+  if (!candidate.help_text || candidate.help_text.trim().length < 80) {
+    errors.push("help_text_required");
+  }
+  if (candidate.help_text && candidate.help_text.length > MISSION_HELP_MAX_CHARS) {
+    errors.push("help_text_too_long");
+  }
   if (!hasPositiveImpact(candidate.expected_impact as any)) {
     errors.push("expected_impact_must_have_positive_metric");
   }
@@ -886,7 +930,7 @@ function validateCandidate(
     }
   }
 
-  const publicText = `${candidate.title} ${candidate.description} ${candidate.personalization_reason}`;
+  const publicText = `${candidate.title} ${candidate.description} ${candidate.personalization_reason} ${candidate.help_text}`;
   const text = normalizeText(publicText);
   if (containsInternalIdentifier(publicText)) {
     errors.push("public_text_contains_internal_identifier");
@@ -999,6 +1043,7 @@ function buildFallbackCandidate(
   const slotHints = buildPersonalizationSlotHints(pattern, usedFacts, profile, effortMinutes);
   const description = buildDeterministicDescription(pattern, missionType, slotHints);
   const personalizationReason = buildPersonalizationReason(pattern, usedFacts, slotHints);
+  const helpText = buildDeterministicHelpText(pattern, description, missionType, effortMinutes);
 
   return {
     title: pattern.fallback_title_pt,
@@ -1010,6 +1055,7 @@ function buildFallbackCandidate(
     cost_level: pattern.cost_level,
     used_fact_keys: usedFacts.map((fact) => fact.fact_key).slice(0, 4),
     personalization_reason: personalizationReason,
+    help_text: helpText,
     expected_impact: expectedImpact,
     pattern_key: pattern.key,
     action_fingerprint: pattern.action_fingerprint,
@@ -1018,6 +1064,7 @@ function buildFallbackCandidate(
     ai_justification: {
       category: pattern.category,
       reason: personalizationReason,
+      help_text: helpText,
       mission_type: missionType,
       generated_by: ALGORITHM_VERSION,
       personalization_slots: pattern.personalization_slots,
@@ -1159,6 +1206,27 @@ function buildPersonalizationReason(
   );
 }
 
+function buildDeterministicHelpText(
+  pattern: PatternRow,
+  description: string,
+  missionType: MissionType,
+  effortMinutes: number,
+) {
+  const timeWindow = missionType === "specialized"
+    ? "Use como um roteiro da semana, dividindo a ação em dois ou três momentos curtos."
+    : `Reserve cerca de ${effortMinutes} minutos hoje.`;
+  const category = CATEGORY_LABELS[pattern.category] ?? "sustentabilidade";
+  const text =
+    `${timeWindow} Comece pela situação da missão: ${description} ` +
+    `Se algo não estiver sob seu controle, faça a menor versão segura da ação. ` +
+    `Considere concluída quando houver uma decisão ou destino claro ligado a ${category}, sem compra nova nem risco.`;
+
+  return sanitizePublicText(
+    text.slice(0, MISSION_HELP_MAX_CHARS),
+    "Comece pela situação descrita na missão, faça a menor versão segura da ação e considere concluída quando houver um destino ou decisão sustentável claro.",
+  );
+}
+
 function buildAiCandidateFromBlueprint(
   rawCandidate: Record<string, unknown>,
   blueprintByPatternKey: Map<string, MissionBlueprint>,
@@ -1186,12 +1254,22 @@ function buildAiCandidateFromBlueprint(
       baseCandidate.personalization_reason,
       360,
     ),
+    help_text: sanitizeAiText(
+      rawCandidate.help_text,
+      baseCandidate.help_text,
+      MISSION_HELP_MAX_CHARS,
+    ),
     ai_justification: {
       ...baseCandidate.ai_justification,
       reason: sanitizeAiText(
         rawCandidate.personalization_reason,
         baseCandidate.personalization_reason,
         360,
+      ),
+      help_text: sanitizeAiText(
+        rawCandidate.help_text,
+        baseCandidate.help_text,
+        MISSION_HELP_MAX_CHARS,
       ),
       composed_by_ai: true,
       composer_candidate_index: candidateIndex,
@@ -1204,10 +1282,9 @@ async function composeMissionCandidatesWithAi(
   contextSummary: Record<string, unknown>,
 ) {
   const hasAiKey = Boolean(
-    Deno.env.get("OPENAI_API_KEY") ??
-      Deno.env.get("OPEN_AI_KEY") ??
-      Deno.env.get("GEMINI_API_KEY") ??
-      Deno.env.get("GROQ_API_KEY"),
+    configuredSecret(Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY")) ??
+      configuredSecret(Deno.env.get("GEMINI_API_KEY")) ??
+      configuredSecret(Deno.env.get("GROQ_API_KEY")),
   );
 
   if (!hasAiKey) {
@@ -1216,6 +1293,8 @@ async function composeMissionCandidatesWithAi(
       usedAi: false,
       fallbackReason: "no_ai_key",
       fallbackDetail: "no_ai_key",
+      aiProvider: null,
+      aiModel: null,
     };
   }
 
@@ -1242,20 +1321,27 @@ async function composeMissionCandidatesWithAi(
     score: Math.round(rankedPattern.score * 100) / 100,
   }));
 
-  const aiResult = await runJsonAgent({
-    role: "adventurer",
-    task: `Componha 2 a ${MAX_AI_CANDIDATES} candidatas de missão em português brasileiro usando APENAS os blueprints seguros.
-Regras:
-- Cada candidata deve escolher um pattern_key recebido nos blueprints.
-- Pode variar título, momento da rotina, objeto concreto e abordagem dentro dos slots do blueprint.
-- Não altere categoria, action_fingerprint, objetivo ambiental, dificuldade, custo, tempo, XP, impacto ou facts fora dos recebidos.
-- Use somente used_fact_keys presentes no blueprint escolhido.
-- A descrição deve ser concreta, sustentável, segura, curta e não genérica.
-- A descrição deve fechar o ciclo da ação: contexto ou objeto + ação concreta + destino, decisão, uso, prevenção ou próximo passo sustentável.
-- Não pare em "abrir", "listar", "separar", "observar" ou "identificar"; diga o que a pessoa fará com o item, sobra, rota, resíduo, aparelho ou informação encontrada.
-- Se o blueprint tiver mission_window_days = 7, escreva como missão semanal: algo para distribuir, repetir ou acompanhar ao longo da semana.
-- Não copie nem acrescente rodapés genéricos como "registre mentalmente o que funcionou", "não compre nada para concluir" ou "Distribua ou repita a ação".
-- Evite frases robóticas como "certifique-se de completar em até X minutos".
+	  const aiResult = await runJsonAgent({
+	    role: "adventurer",
+	    task: `Componha ${MIN_AI_CANDIDATES} a ${MAX_AI_CANDIDATES} candidatas de missão em português brasileiro usando APENAS os blueprints seguros.
+	Regras:
+	- Cada candidata deve escolher um pattern_key recebido nos blueprints.
+	- Use pattern_keys diferentes sempre que houver blueprints suficientes; não concentre todas as candidatas no mesmo tipo de ação.
+	- Pode variar título, momento da rotina, objeto concreto e abordagem dentro dos slots do blueprint.
+	- Não altere categoria, action_fingerprint, objetivo ambiental, dificuldade, custo, tempo, XP, impacto ou facts fora dos recebidos.
+	- Use somente used_fact_keys presentes no blueprint escolhido.
+	- A descrição deve ser concreta, sustentável, segura, curta e não genérica.
+	- A descrição precisa conter uma ação observável, não apenas intenção: combine, escolha, defina, encaminhe, guarde, use, substitua, compare e decida, mapeie e marque, separe e dê destino.
+	- A descrição deve fechar o ciclo da ação: contexto ou objeto + ação concreta + destino, decisão, uso, prevenção ou próximo passo sustentável.
+	- Não pare em "abrir", "listar", "separar", "observar", "verificar", "avaliar" ou "identificar"; diga o que a pessoa fará com o item, sobra, rota, resíduo, aparelho ou informação encontrada.
+	- Para transporte, deixe explícita a decisão sustentável: carona segura, rota agrupada, viagem evitada, trecho ativo seguro, deslocamento fora de pico ou alternativa remota.
+	- Para água/energia compartilhada, deixe explícito o combinado ou regra observável, como fechar, desligar, ajustar, avisar, sinalizar ou testar uma rotina.
+	- Crie help_text como uma ajuda prática sob demanda, com no máximo ${MISSION_HELP_MAX_CHARS} caracteres.
+	- help_text deve explicar "como fazer" em 3 a 5 passos curtos: por onde começar, o que observar/decidir, como adaptar se houver impedimento e o que conta como concluído.
+	- help_text deve esclarecer a missão sem expandir escopo, sem pedir compra nova e sem repetir a descrição com outras palavras.
+	- Se o blueprint tiver mission_window_days = 7, escreva como missão semanal: algo para distribuir, repetir ou acompanhar ao longo da semana.
+	- Não copie nem acrescente rodapés genéricos como "registre mentalmente o que funcionou", "não compre nada para concluir" ou "Distribua ou repita a ação".
+	- Evite frases robóticas como "certifique-se de completar em até X minutos".
 - Evite justificativas genéricas como "seu nível de usuário"; cite limites, preferências ou fatos concretos do contexto.
 - Nunca mostre fact_key, pattern_key, action_fingerprint, nomes de tabela ou códigos internos no texto ao usuário.
 - Não invente restrições, dados médicos, custos, acesso doméstico ou fatos novos.
@@ -1265,17 +1351,31 @@ JSON esperado:
   "candidates": [
     {
       "pattern_key": "string",
-      "title": "string",
-      "description": "string",
-      "used_fact_keys": ["string"],
-      "personalization_reason": "string"
-    }
+	      "title": "string",
+	      "description": "string",
+	      "used_fact_keys": ["string"],
+	      "personalization_reason": "string",
+	      "help_text": "string"
+	    }
   ]
 }`,
-    context: {
-      blueprints: safeBlueprints,
-      context_summary: contextSummary,
-    },
+	    context: {
+	      blueprints: safeBlueprints,
+	      context_summary: contextSummary,
+	      validation_checklist: {
+	        description_must_include: [
+	          "ação concreta observável",
+	          "objeto, rotina, rota, aparelho, resíduo ou decisão específica",
+	          "próximo passo sustentável ou critério de conclusão",
+	        ],
+	        reject_if_description_only: [
+	          "observa sem decidir",
+	          "lista sem usar ou encaminhar",
+	          "separa sem destino",
+	          "avalia transporte sem escolher rota, carona, deslocamento evitado ou alternativa segura",
+	        ],
+	      },
+	    },
     fallback: {
       candidates: [],
     },
@@ -1287,9 +1387,22 @@ JSON esperado:
   const fallbackDetail = typeof aiResult?._fallback_detail === "string"
     ? aiResult._fallback_detail
     : fallbackReason;
+  const aiProvider = typeof aiResult?._agent_provider === "string"
+    ? aiResult._agent_provider
+    : null;
+  const aiModel = typeof aiResult?._agent_model === "string"
+    ? aiResult._agent_model
+    : null;
 
   if (fallbackReason) {
-    return { candidates: [] as MissionCandidate[], usedAi: false, fallbackReason, fallbackDetail };
+    return {
+      candidates: [] as MissionCandidate[],
+      usedAi: false,
+      fallbackReason,
+      fallbackDetail,
+      aiProvider,
+      aiModel,
+    };
   }
 
   const rawCandidates = Array.isArray(aiResult?.candidates)
@@ -1307,22 +1420,24 @@ JSON esperado:
       usedAi: false,
       fallbackReason: "ai_returned_no_valid_blueprint_candidate",
       fallbackDetail: "empty_candidate_list",
+      aiProvider,
+      aiModel,
     };
   }
 
-  return { candidates, usedAi: true, fallbackReason: null, fallbackDetail: null };
+  return { candidates, usedAi: true, fallbackReason: null, fallbackDetail: null, aiProvider, aiModel };
 }
 
 function aiRuntimeSummary() {
-  const openAiKey = Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY");
-  const geminiKey = Deno.env.get("GEMINI_API_KEY");
-  const groqKey = Deno.env.get("GROQ_API_KEY");
+  const openAiKey = configuredSecret(Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY"));
+  const geminiKey = configuredSecret(Deno.env.get("GEMINI_API_KEY"));
+  const groqKey = configuredSecret(Deno.env.get("GROQ_API_KEY"));
 
   if (openAiKey) {
     return {
       ai_available: true,
       ai_provider: "openai",
-      ai_model: Deno.env.get("OPENAI_MODEL") ?? "gpt-4o-mini",
+      ai_model: Deno.env.get("OPENAI_MODEL") ?? DEFAULT_OPENAI_MODEL,
     };
   }
 
@@ -1330,7 +1445,7 @@ function aiRuntimeSummary() {
     return {
       ai_available: true,
       ai_provider: "gemini",
-      ai_model: Deno.env.get("GEMINI_MODEL") ?? "gemini-3.5-flash",
+      ai_model: Deno.env.get("GEMINI_MODEL") ?? DEFAULT_GEMINI_MODEL,
     };
   }
 
@@ -1338,7 +1453,7 @@ function aiRuntimeSummary() {
     return {
       ai_available: true,
       ai_provider: "groq",
-      ai_model: Deno.env.get("GROQ_MODEL") ?? "llama-3.3-70b-versatile",
+      ai_model: Deno.env.get("GROQ_MODEL") ?? DEFAULT_GROQ_MODEL,
     };
   }
 
@@ -1347,6 +1462,123 @@ function aiRuntimeSummary() {
     ai_provider: null,
     ai_model: null,
   };
+}
+
+function generationAiDebug(snapshot: unknown) {
+  const ai = asObject(asObject(snapshot).ai);
+  return {
+    ai_used: ai.ai_used === true,
+    used_fallback: Boolean(ai.fallback_reason),
+    fallback_reason: typeof ai.fallback_reason === "string" ? ai.fallback_reason : null,
+    fallback_detail: typeof ai.fallback_detail === "string" ? ai.fallback_detail : null,
+    ai_provider: typeof ai.ai_provider === "string" ? ai.ai_provider : null,
+    ai_model: typeof ai.ai_model === "string" ? ai.ai_model : null,
+    ai_candidate_count: numberValue(ai.ai_candidate_count, 0),
+    blueprint_count: numberValue(ai.blueprint_count, 0),
+    validation_error_count: numberValue(ai.validation_error_count, 0),
+  };
+}
+
+function missionResponseFromRow(
+  mission: any,
+  input: {
+    missionType: MissionType;
+    generationRequestId: string | null;
+    message: string;
+    idempotent?: boolean;
+    usedCache?: boolean;
+  },
+) {
+  const aiDebug = generationAiDebug(mission?.generation_snapshot);
+  return {
+    success: true,
+    mission_id: mission?.id,
+    pattern_key: mission?.pattern_key ?? null,
+    action_fingerprint: mission?.action_fingerprint ?? null,
+    category: mission?.category ?? null,
+    mission_status: mission?.status,
+    mission_type: mission?.mission_type ?? input.missionType,
+    client_request_id: input.generationRequestId,
+    idempotent: input.idempotent === true,
+    used_cache: input.usedCache === true,
+    ...aiDebug,
+    message: input.message,
+  };
+}
+
+async function expireCachedMissions(
+  supabaseAdmin: any,
+  userId: string,
+  missionType: MissionType,
+) {
+  await supabaseAdmin
+    .from("user_missions")
+    .update({ delivery_status: "expired_cache" })
+    .eq("user_id", userId)
+    .eq("mission_type", missionType)
+    .eq("delivery_status", "cached")
+    .lt("expires_at", new Date().toISOString());
+}
+
+async function findCachedMission(
+  supabaseAdmin: any,
+  userId: string,
+  missionType: MissionType,
+) {
+  await expireCachedMissions(supabaseAdmin, userId, missionType);
+
+  const { data, error } = await supabaseAdmin
+    .from("user_missions")
+    .select("*")
+    .eq("user_id", userId)
+    .eq("mission_type", missionType)
+    .eq("delivery_status", "cached")
+    .eq("status", "active")
+    .gt("expires_at", new Date().toISOString())
+    .order("created_at", { ascending: true })
+    .limit(1)
+    .maybeSingle();
+
+  if (error) throw new Error(`Erro ao buscar missão em cache: ${error.message}`);
+  return data ?? null;
+}
+
+async function claimCachedMission(
+  supabaseAdmin: any,
+  userId: string,
+  missionType: MissionType,
+  generationRequestId: string | null,
+) {
+  const cached = await findCachedMission(supabaseAdmin, userId, missionType);
+  if (!cached) return null;
+
+  const now = new Date();
+  const cacheMetadata = asObject(cached.cache_metadata);
+  const { data, error } = await supabaseAdmin
+    .from("user_missions")
+    .update({
+      delivery_status: "delivered",
+      claimed_at: now.toISOString(),
+      created_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + missionWindowDays(missionType) * 24 * 60 * 60 * 1000)
+        .toISOString(),
+      generation_request_id: generationRequestId,
+      cache_metadata: {
+        ...cacheMetadata,
+        claimed_from_cache: true,
+        claimed_at: now.toISOString(),
+        client_request_id: generationRequestId,
+      },
+    })
+    .eq("id", cached.id)
+    .eq("user_id", userId)
+    .eq("mission_type", missionType)
+    .eq("delivery_status", "cached")
+    .select("*")
+    .maybeSingle();
+
+  if (error) throw new Error(`Erro ao reivindicar missão em cache: ${error.message}`);
+  return data ?? null;
 }
 
 async function writeGenerationLog(
@@ -1401,6 +1633,7 @@ serve(async (req: Request) => {
     const userId = body.userId;
     const missionType: MissionType = isMissionType(body.missionType) ? body.missionType : "daily";
     const generationRequestId = normalizeClientRequestId(body.clientRequestId ?? body.generationRequestId);
+    const prefetchOnly = body?.prefetchOnly === true;
 
     if (!userId) {
       throw new Error("O parâmetro 'userId' é obrigatório no corpo da requisição.");
@@ -1409,7 +1642,11 @@ serve(async (req: Request) => {
     await requireUserIdFromJwt(req, userId);
     const supabaseAdmin = createSupabaseAdmin();
 
-    console.log("[MISSION_GEN] Iniciando Trilha hiperpersonalizada.", { userId, missionType });
+    console.log("[MISSION_GEN] Iniciando Trilha hiperpersonalizada.", {
+      userId,
+      missionType,
+      prefetchOnly,
+    });
 
     const existingMissionForRequest = await findMissionByGenerationRequest(
       supabaseAdmin,
@@ -1456,13 +1693,56 @@ serve(async (req: Request) => {
       .from("user_missions")
       .select("id, category, pattern_key, action_fingerprint, title, description, created_at")
       .eq("user_id", userId)
-      .eq("status", "active");
+      .eq("status", "active")
+      .eq("delivery_status", "delivered");
 
     if (activeError) throw new Error(`Erro ao contar missões ativas: ${activeError.message}`);
     const activeMissionCount = activeMissions?.length ?? 0;
 
     if (activeMissionCount >= MAX_ACTIVE_MISSIONS) {
-      return jsonResponse({ success: true, message: "max_missions_reached" });
+      return jsonResponse({
+        success: true,
+        prefetched: false,
+        message: "max_missions_reached",
+      });
+    }
+
+    if (!prefetchOnly) {
+      const cachedMission = await claimCachedMission(
+        supabaseAdmin,
+        userId,
+        missionType,
+        generationRequestId,
+      );
+
+      if (cachedMission) {
+        console.log("[MISSION_GEN] Missão entregue do cache.", {
+          userId,
+          missionType,
+          generationRequestId,
+          missionId: cachedMission.id,
+        });
+
+        return jsonResponse(missionResponseFromRow(cachedMission, {
+          missionType,
+          generationRequestId,
+          message: "mission_created",
+          usedCache: true,
+        }));
+      }
+    } else {
+      const existingCachedMission = await findCachedMission(supabaseAdmin, userId, missionType);
+      if (existingCachedMission) {
+        return jsonResponse({
+          success: true,
+          prefetched: true,
+          cached: true,
+          message: "cached_mission_already_ready",
+          mission_id: existingCachedMission.id,
+          mission_type: missionType,
+          ...generationAiDebug(existingCachedMission.generation_snapshot),
+        });
+      }
     }
 
     const recentSince = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
@@ -1481,6 +1761,7 @@ serve(async (req: Request) => {
         .from("user_missions")
         .select("id, title, description, status, category, pattern_key, action_fingerprint, created_at, completed_at")
         .eq("user_id", userId)
+        .eq("delivery_status", "delivered")
         .gte("created_at", recentSince)
         .order("created_at", { ascending: false })
         .limit(40),
@@ -1724,6 +2005,8 @@ serve(async (req: Request) => {
         usedAi: false,
         fallbackReason: "no_valid_blueprint_after_filters",
         fallbackDetail: "no_valid_blueprint_after_filters",
+        aiProvider: null,
+        aiModel: null,
       };
     aiAttemptCount = aiComposition.usedAi ? aiComposition.candidates.length : blueprints.length;
 
@@ -1836,12 +2119,16 @@ serve(async (req: Request) => {
       }
     }
 
-    if (!finalCandidate || !selectedPattern) {
-      const errorGenerationSnapshot = {
-        ...generationSnapshot,
-        ai: {
-          ...aiRuntime,
-          ai_used: false,
+	    if (!finalCandidate || !selectedPattern) {
+	      const effectiveAiProvider = aiComposition.aiProvider ?? aiRuntime.ai_provider;
+	      const effectiveAiModel = aiComposition.aiModel ?? aiRuntime.ai_model;
+	      const errorGenerationSnapshot = {
+	        ...generationSnapshot,
+	        ai: {
+	          ...aiRuntime,
+	          ai_provider: effectiveAiProvider,
+	          ai_model: effectiveAiModel,
+	          ai_used: false,
           ai_stage: "mission_composer",
           fallback_reason: "no_valid_pattern_candidate",
           fallback_detail: aiComposition.fallbackDetail ?? "no_valid_pattern_candidate",
@@ -1870,15 +2157,20 @@ serve(async (req: Request) => {
       }, 422);
     }
 
-    const missionId = crypto.randomUUID();
-    const expiresInHours = missionWindowDays(missionType) * 24;
-    const now = new Date().toISOString();
-    const finalGenerationSnapshot = {
-      ...generationSnapshot,
-      ai: {
-        ...aiRuntime,
-        ai_used: usedAi,
-        ai_stage: "mission_composer",
+	    const missionId = crypto.randomUUID();
+	    const expiresInHours = missionWindowDays(missionType) * 24;
+	    const nowDate = new Date();
+	    const now = nowDate.toISOString();
+	    const effectiveAiProvider = aiComposition.aiProvider ?? aiRuntime.ai_provider;
+	    const effectiveAiModel = aiComposition.aiModel ?? aiRuntime.ai_model;
+	    const finalGenerationSnapshot = {
+	      ...generationSnapshot,
+	      ai: {
+	        ...aiRuntime,
+	        ai_provider: effectiveAiProvider,
+	        ai_model: effectiveAiModel,
+	        ai_used: usedAi,
+	        ai_stage: "mission_composer",
         fallback_reason: usedFallback
           ? finalFallbackReason ?? "deterministic_contextual_fallback"
           : null,
@@ -1920,14 +2212,36 @@ serve(async (req: Request) => {
       expected_impact: finalCandidate.expected_impact,
       pattern_key: finalCandidate.pattern_key,
       action_fingerprint: finalCandidate.action_fingerprint,
-      generation_request_id: generationRequestId,
+      generation_request_id: prefetchOnly ? null : generationRequestId,
+      delivery_status: prefetchOnly ? "cached" : "delivered",
+      claimed_at: prefetchOnly ? null : now,
+      cache_metadata: {
+        prefetched: prefetchOnly,
+        prefetched_at: prefetchOnly ? now : null,
+        client_request_id: prefetchOnly ? null : generationRequestId,
+      },
       created_at: now,
-      expires_at: new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString(),
+      expires_at: prefetchOnly
+        ? new Date(nowDate.getTime() + MISSION_CACHE_TTL_HOURS * 60 * 60 * 1000).toISOString()
+        : new Date(nowDate.getTime() + expiresInHours * 60 * 60 * 1000).toISOString(),
     };
 
     const { error: insertError } = await supabaseAdmin
       .from("user_missions")
       .insert(insertPayload);
+
+    if (insertError && prefetchOnly && insertError.code === "23505") {
+      const existingCachedMission = await findCachedMission(supabaseAdmin, userId, missionType);
+      return jsonResponse({
+        success: true,
+        prefetched: true,
+        cached: true,
+        message: "cached_mission_already_ready",
+        mission_id: existingCachedMission?.id ?? null,
+        mission_type: missionType,
+        ...(existingCachedMission ? generationAiDebug(existingCachedMission.generation_snapshot) : {}),
+      });
+    }
 
     if (insertError && generationRequestId && insertError.code === "23505") {
       const existing = await findMissionByGenerationRequest(
@@ -1937,6 +2251,7 @@ serve(async (req: Request) => {
       );
 
       if (existing) {
+        const aiDebug = generationAiDebug(existing.generation_snapshot);
         console.log("[MISSION_GEN] Conflito idempotente resolvido.", {
           userId,
           missionType,
@@ -1954,6 +2269,7 @@ serve(async (req: Request) => {
           mission_type: existing.mission_type ?? missionType,
           client_request_id: generationRequestId,
           idempotent: true,
+          ...aiDebug,
           message: "mission_already_created",
         });
       }
@@ -1980,7 +2296,7 @@ serve(async (req: Request) => {
     await logAgentInteraction(supabaseAdmin, {
       userId,
       agent: "adventurer",
-      eventType: "GENERATE_MISSION",
+      eventType: prefetchOnly ? "PREFETCH_MISSION" : "GENERATE_MISSION",
       inputSummary: {
         missionType,
         generationRequestId,
@@ -2000,18 +2316,18 @@ serve(async (req: Request) => {
       },
     });
 
-    console.log("[MISSION_GEN] Missão criada por pattern.", {
-      userId,
-      missionId,
+	    console.log(prefetchOnly ? "[MISSION_GEN] Missão pré-gerada por pattern." : "[MISSION_GEN] Missão criada por pattern.", {
+	      userId,
+	      missionId,
       missionType,
       patternKey: selectedPattern.key,
       actionFingerprint: finalCandidate.action_fingerprint,
       category: finalCandidate.category,
       difficulty: finalCandidate.difficulty,
-      aiUsed: usedAi,
-      aiStage: "mission_composer",
-      aiProvider: aiRuntime.ai_provider,
-      aiModel: aiRuntime.ai_model,
+	      aiUsed: usedAi,
+	      aiStage: "mission_composer",
+	      aiProvider: effectiveAiProvider,
+	      aiModel: effectiveAiModel,
       fallbackReason: usedFallback
         ? finalFallbackReason ?? "deterministic_contextual_fallback"
         : null,
@@ -2020,10 +2336,39 @@ serve(async (req: Request) => {
         : null,
       candidateCount: aiAttemptCount,
       blueprintCount: blueprints.length,
-      aiCandidateCount: aiComposition.candidates.length,
-      usedFallback,
-      generationRequestId,
-    });
+	      aiCandidateCount: aiComposition.candidates.length,
+	      usedFallback,
+	      generationRequestId,
+	      validationErrorSummary: summarizeValidationErrors(validationErrors),
+	    });
+
+    if (prefetchOnly) {
+      return jsonResponse({
+        success: true,
+        prefetched: true,
+        cached: true,
+        mission_id: missionId,
+        mission_type: missionType,
+        pattern_key: selectedPattern.key,
+        action_fingerprint: finalCandidate.action_fingerprint,
+        ai_used: usedAi,
+        used_fallback: usedFallback,
+        used_cache: false,
+        fallback_reason: usedFallback
+          ? finalFallbackReason ?? "deterministic_contextual_fallback"
+          : null,
+        fallback_detail: usedFallback
+          ? aiComposition.fallbackDetail ?? finalFallbackReason ?? "deterministic_contextual_fallback"
+          : null,
+	      ai_provider: effectiveAiProvider,
+	      ai_model: effectiveAiModel,
+	      ai_candidate_count: aiComposition.candidates.length,
+	      blueprint_count: blueprints.length,
+	      validation_error_count: validationErrors.length,
+	      validation_error_summary: summarizeValidationErrors(validationErrors),
+        message: "cached_mission_created",
+      });
+    }
 
     return jsonResponse({
       success: true,
@@ -2033,11 +2378,21 @@ serve(async (req: Request) => {
       action_fingerprint: finalCandidate.action_fingerprint,
       ai_used: usedAi,
       used_fallback: usedFallback,
+      used_cache: false,
       fallback_reason: usedFallback
         ? finalFallbackReason ?? "deterministic_contextual_fallback"
         : null,
-      message: "mission_created",
-    });
+      fallback_detail: usedFallback
+        ? aiComposition.fallbackDetail ?? finalFallbackReason ?? "deterministic_contextual_fallback"
+        : null,
+	      ai_provider: effectiveAiProvider,
+	      ai_model: effectiveAiModel,
+	      ai_candidate_count: aiComposition.candidates.length,
+	      blueprint_count: blueprints.length,
+	      validation_error_count: validationErrors.length,
+	      validation_error_summary: summarizeValidationErrors(validationErrors),
+	      message: "mission_created",
+	    });
   } catch (error: any) {
     console.error("[MISSION_GEN] Erro crítico:", error.message);
     return jsonResponse({ error: error.message }, getErrorStatus(error));

@@ -8,6 +8,8 @@ type ImpactTotals = {
   energy_kwh: number;
 };
 
+type MissionType = "daily" | "specialized";
+
 type ProgressEvent = {
   source: "mission_completed";
   missionId: string;
@@ -27,7 +29,7 @@ interface Mission {
   description: string;
   expires_at: string;
   completed_at?: string | null;
-  mission_type?: "daily" | "specialized";
+  mission_type?: MissionType;
   category?: string | null;
   personalization_reason?: string | null;
   xp_reward?: number | null;
@@ -37,6 +39,7 @@ interface Mission {
   ai_justification: {
     category: string;
     reason: string;
+    help_text?: string | null;
   };
 }
 
@@ -53,12 +56,12 @@ interface EcoState {
   lastError: string | null;
   lastNotice: string | null;
   lastProgressEvent: ProgressEvent | null;
-  pendingGenerationRequestIds: Partial<Record<"daily" | "specialized", string>>;
+  pendingGenerationRequestIds: Partial<Record<MissionType, string>>;
 
   // Ações
   fetchProfile: (userId: string) => Promise<void>;
-  fetchPendingMissions: (userId: string, missionType?: "daily" | "specialized") => Promise<void>;
-  generateMissions: (userId: string, missionType?: "daily" | "specialized") => Promise<void>;
+  fetchPendingMissions: (userId: string, missionType?: MissionType) => Promise<void>;
+  generateMissions: (userId: string, missionType?: MissionType) => Promise<void>;
   completeMission: (missionId: string) => Promise<void>;
   refuseMission: (missionId: string) => Promise<void>;
   failMission: (missionId: string) => Promise<void>;
@@ -162,6 +165,7 @@ async function markExpiredMissionsAsFailed(userId: string) {
     .select("id")
     .eq("user_id", userId)
     .eq("status", "active")
+    .eq("delivery_status", "delivered")
     .lt("expires_at", now);
 
   if (selectError) {
@@ -178,7 +182,8 @@ async function markExpiredMissionsAsFailed(userId: string) {
         .update({ status: "failed" })
         .eq("id", mission.id)
         .eq("user_id", userId)
-        .eq("status", "active");
+        .eq("status", "active")
+        .eq("delivery_status", "delivered");
 
       if (error) {
         console.error("[TRILHA] Erro ao marcar missão vencida como failed:", {
@@ -217,7 +222,7 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function createGenerationRequestId(missionType: "daily" | "specialized") {
+function createGenerationRequestId(missionType: MissionType) {
   const random =
     typeof crypto !== "undefined" && "randomUUID" in crypto
       ? crypto.randomUUID()
@@ -245,6 +250,70 @@ async function invokeFunctionWithRetry(
   }
 
   return lastResult ?? { data: null, error: new Error(`Falha ao chamar ${functionName}.`) };
+}
+
+const missionPrefetchPromises = new Map<string, Promise<void>>();
+
+function missionPrefetchKey(userId: string, missionType: MissionType) {
+  return `${userId}:${missionType}`;
+}
+
+function prefetchMissionCache(userId: string, missionType: MissionType) {
+  const key = missionPrefetchKey(userId, missionType);
+  const existing = missionPrefetchPromises.get(key);
+  if (existing) return existing;
+
+  const promise = invokeFunctionWithRetry(
+    "generate-missions",
+    { userId, missionType, prefetchOnly: true },
+    [700, 1600],
+  )
+    .then(({ data, error }) => {
+      if (error || data?.error) {
+        console.warn("[MISSION_GEN] Prefetch de missão indisponível:", {
+          missionType,
+          message: error?.message ?? data?.error ?? data?.message,
+        });
+        return;
+      }
+
+      console.log("[MISSION_GEN] Missão em cache:", {
+        missionType,
+        message: data?.message,
+        missionId: data?.mission_id,
+        aiUsed: data?.ai_used,
+        usedFallback: data?.used_fallback,
+      });
+    })
+    .catch((error) => {
+      console.warn("[MISSION_GEN] Falha no prefetch de missão:", {
+        missionType,
+        message: error instanceof Error ? error.message : String(error),
+      });
+    })
+    .finally(() => {
+      missionPrefetchPromises.delete(key);
+    });
+
+  missionPrefetchPromises.set(key, promise);
+  return promise;
+}
+
+function scheduleMissionCacheForGaps(
+  userId: string,
+  missions: Mission[],
+  requestedType?: MissionType,
+) {
+  const missionTypes: MissionType[] = requestedType ? [requestedType] : ["daily", "specialized"];
+
+  for (const missionType of missionTypes) {
+    const hasActiveOfType = missions.some((mission) =>
+      (mission.mission_type || "daily") === missionType
+    );
+    if (!hasActiveOfType) {
+      void prefetchMissionCache(userId, missionType);
+    }
+  }
 }
 
 async function invokeEditMissionWithRetry(
@@ -315,7 +384,7 @@ export const useEcoStore = create<EcoState>((set, get) => ({
     }
   },
 
-  fetchPendingMissions: async (userId: string, missionType?: "daily" | "specialized") => {
+  fetchPendingMissions: async (userId: string, missionType?: MissionType) => {
     set({ loading: true });
     await markExpiredMissionsAsFailed(userId);
     console.log("[TRILHA] Buscando missões ativas:", { userId, missionType });
@@ -338,7 +407,8 @@ export const useEcoStore = create<EcoState>((set, get) => ({
         completed_at
       `)
       .eq("user_id", userId)
-      .eq("status", "active");
+      .eq("status", "active")
+      .eq("delivery_status", "delivered");
 
     if (error) {
       console.error("[TRILHA] Erro ao buscar missões:", error.message);
@@ -361,6 +431,7 @@ export const useEcoStore = create<EcoState>((set, get) => ({
         console.log("[TRILHA] Missões vencidas removidas da lista ativa:", data.length - activeMissions.length);
       }
       set({ missions: activeMissions, lastError: null });
+      scheduleMissionCacheForGaps(userId, activeMissions, missionType);
     }
     set({ loading: false });
   },
@@ -380,6 +451,12 @@ export const useEcoStore = create<EcoState>((set, get) => ({
     }));
 
     try {
+      const prefetchPromise = missionPrefetchPromises.get(missionPrefetchKey(userId, missionType));
+      if (prefetchPromise) {
+        await prefetchPromise;
+      }
+
+      const startedAt = Date.now();
       const { data, error } = await invokeFunctionWithRetry(
         "generate-missions",
         {
@@ -392,12 +469,59 @@ export const useEcoStore = create<EcoState>((set, get) => ({
 
       if (error) throw error;
 
+      const generationSource = data?.used_cache
+        ? "mission_cache"
+        : data?.used_fallback
+          ? "deterministic_fallback"
+          : data?.ai_used
+            ? "ai"
+            : data?.idempotent
+              ? "existing_idempotent_mission"
+              : "unknown";
+      const idempotencyStatus = data?.idempotent === true
+        ? "reused_existing_request"
+        : "created_new_request";
+      const generationDebug = {
+        missionType,
+        source: generationSource,
+        aiUsed: data?.ai_used === true,
+        usedFallback: data?.used_fallback === true,
+        fallbackReason: data?.fallback_reason ?? null,
+        fallbackDetail: data?.fallback_detail ?? null,
+        aiProvider: data?.ai_provider ?? null,
+        aiModel: data?.ai_model ?? null,
+        aiCandidateCount: data?.ai_candidate_count ?? null,
+        blueprintCount: data?.blueprint_count ?? null,
+        validationErrorCount: data?.validation_error_count ?? null,
+        validationErrorSummary: data?.validation_error_summary ?? null,
+        usedCache: data?.used_cache === true,
+        idempotent: data?.idempotent === true,
+        idempotencyStatus,
+        elapsedMs: Date.now() - startedAt,
+        clientRequestId: data?.client_request_id,
+      };
+
+      if (data?.used_cache) {
+        console.log("[MISSION_GEN] Origem da geração: missão pré-gerada em cache", generationDebug);
+      } else if (data?.used_fallback) {
+        console.warn("[MISSION_GEN] Origem da geração: fallback determinístico", generationDebug);
+      } else {
+        console.log("[MISSION_GEN] Origem da geração:", generationDebug);
+      }
+
       console.log("[MISSION_GEN] Resposta da função:", {
         missionType,
         success: data?.success,
         message: data?.message,
         idempotent: data?.idempotent,
+        idempotencyStatus,
         clientRequestId: data?.client_request_id,
+        aiUsed: data?.ai_used,
+        usedFallback: data?.used_fallback,
+        usedCache: data?.used_cache,
+        fallbackReason: data?.fallback_reason,
+        fallbackDetail: data?.fallback_detail,
+        validationErrorSummary: data?.validation_error_summary,
       });
 
       if (data?.message === "max_missions_reached") {

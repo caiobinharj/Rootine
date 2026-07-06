@@ -177,6 +177,7 @@ serve(async (req: Request) => {
         .from("user_missions")
         .select("status, category, difficulty, mission_type, created_at")
         .eq("user_id", userId)
+        .eq("delivery_status", "delivered")
         .order("created_at", { ascending: false })
         .limit(50),
       supabaseAdmin

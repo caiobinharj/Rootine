@@ -345,6 +345,7 @@ export default function ProfileScreen() {
           .from("user_missions")
           .select("id,title,status,created_at,completed_at,mission_type,category,difficulty,xp_reward,pattern_key,action_fingerprint")
           .eq("user_id", user.id)
+          .eq("delivery_status", "delivered")
           .order("created_at", { ascending: false })
           .limit(80),
         supabase

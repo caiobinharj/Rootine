@@ -9,9 +9,34 @@ interface RunJsonAgentOptions {
 
 const DEFAULT_MODEL = "gpt-4.1-mini";
 const DEFAULT_GEMINI_MODEL = "gemini-3.5-flash";
+const DEFAULT_GEMINI_FALLBACK_MODELS = [
+  "gemini-3.1-flash-lite",
+  "gemini-2.5-flash-lite",
+  "gemini-2.5-flash",
+];
 const DEFAULT_GROQ_MODEL = "llama-3.3-70b-versatile";
 const DEFAULT_HTTP_TIMEOUT_MS = 45000;
 type HttpAgentProvider = "openai" | "gemini" | "groq";
+
+type AgentTextResult = {
+  text: string;
+  provider: HttpAgentProvider;
+  model: string;
+};
+
+class AgentProviderError extends Error {
+  provider: HttpAgentProvider;
+  model: string;
+  status: number | null;
+
+  constructor(provider: HttpAgentProvider, model: string, message: string, status: number | null = null) {
+    super(message);
+    this.name = "AgentProviderError";
+    this.provider = provider;
+    this.model = model;
+    this.status = status;
+  }
+}
 
 const AGENTS: Record<AgentRole, { name: string; instructions: string }> = {
   orchestrator: {
@@ -74,7 +99,7 @@ export function clampAffinities(value: Record<string, unknown> = {}) {
   return affinities;
 }
 
-function configuredSecret(value: string | undefined) {
+export function configuredSecret(value: string | undefined) {
   const cleaned = String(value ?? "").trim();
   if (!cleaned || cleaned.toLowerCase().includes("sua_chave")) return null;
   return cleaned;
@@ -83,6 +108,19 @@ function configuredSecret(value: string | undefined) {
 function envNumber(name: string, fallback: number) {
   const value = Number(Deno.env.get(name));
   return Number.isFinite(value) ? value : fallback;
+}
+
+function envStringList(name: string) {
+  const value = Deno.env.get(name);
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
 }
 
 export function parseJsonObject<T extends Record<string, unknown>>(
@@ -115,7 +153,11 @@ function sanitizeAgentError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   const lower = message.toLowerCase();
   const statusMatch = message.match(/\b(?:http_|erro\s+\w+:\s*)(\d{3})\b/i);
-  const status = statusMatch ? Number(statusMatch[1]) : null;
+  const status = error instanceof AgentProviderError && error.status
+    ? error.status
+    : statusMatch
+      ? Number(statusMatch[1])
+      : null;
 
   if (status === 429 || lower.includes("rate limit") || lower.includes("insufficient_quota")) {
     return "rate_limit";
@@ -130,28 +172,62 @@ function sanitizeAgentError(error: unknown) {
   return "provider_error";
 }
 
+function providerFromError(error: unknown): HttpAgentProvider | null {
+  if (error instanceof AgentProviderError) return error.provider;
+  const lower = (error instanceof Error ? error.message : String(error)).toLowerCase();
+  if (lower.includes("erro gemini") || lower.includes("gemini")) return "gemini";
+  if (lower.includes("erro groq") || lower.includes("groq")) return "groq";
+  if (lower.includes("erro openai") || lower.includes("openai")) return "openai";
+  return null;
+}
+
+function modelFromError(error: unknown) {
+  if (error instanceof AgentProviderError) return error.model;
+  const message = error instanceof Error ? error.message : String(error);
+  return message.match(/\bmodel:\s*([a-zA-Z0-9._-]+)/)?.[1] ?? null;
+}
+
+function fallbackReasonForError(error: unknown, detail: string) {
+  const provider = providerFromError(error);
+  if (detail === "rate_limit") return provider ? `${provider}_rate_limit` : "rate_limit";
+  if (detail === "auth_error") return provider ? `${provider}_auth_error` : "auth_error";
+  if (detail === "timeout") return provider ? `${provider}_timeout` : "timeout";
+  return detail === "provider_error" && provider ? `${provider}_error` : detail;
+}
+
+function shouldTryNextGeminiModel(error: unknown) {
+  const detail = sanitizeAgentError(error);
+  return [
+    "rate_limit",
+    "http_400",
+    "http_404",
+    "timeout",
+    "network_error",
+    "provider_error",
+  ].includes(detail);
+}
+
 function buildFallbackResult<T extends Record<string, unknown>>(
   role: AgentRole,
   fallback: T,
   error: unknown,
 ): T {
-  const message = error instanceof Error ? error.message : String(error);
   const fallbackDetail = sanitizeAgentError(error);
-  const isQuotaError =
-    message.includes("insufficient_quota") ||
-    message.includes("exceeded your current quota") ||
-    message.includes("Error OpenAI: 429");
+  const fallbackReason = fallbackReasonForError(error, fallbackDetail);
 
-  if (isQuotaError) {
+  if (fallbackDetail === "rate_limit") {
     return {
       ...fallback,
       answer:
-        "A cota da OpenAI deste projeto acabou. Adicione créditos em platform.openai.com, atualize a chave com `npx supabase secrets set OPEN_AI_KEY=...` e tente novamente.",
-      _fallback_reason: "openai_quota",
+        "O provedor de IA atingiu limite de uso ou cota temporária. O Rootine usou uma geração determinística segura nesta tentativa.",
+      _fallback_reason: fallbackReason,
       _fallback_detail: fallbackDetail,
+      _agent_provider: providerFromError(error),
+      _agent_model: modelFromError(error),
     } as T;
   }
 
+  const message = error instanceof Error ? error.message : String(error);
   if (
     message.includes("OPENAI_API_KEY") ||
     message.includes("OPEN_AI_KEY") ||
@@ -164,11 +240,19 @@ function buildFallbackResult<T extends Record<string, unknown>>(
         "A chave de IA não está configurada nas Edge Functions. Configure `GEMINI_API_KEY`, `GROQ_API_KEY` ou `OPEN_AI_KEY` nos secrets do Supabase.",
       _fallback_reason: "missing_agent_key",
       _fallback_detail: "missing_agent_key",
+      _agent_provider: providerFromError(error),
+      _agent_model: modelFromError(error),
     } as T;
   }
 
   console.warn(`[AGENTS] ${role} failed; using fallback output:`, error);
-  return { ...fallback, _fallback_reason: "agent_error", _fallback_detail: fallbackDetail } as T;
+  return {
+    ...fallback,
+    _fallback_reason: fallbackReason,
+    _fallback_detail: fallbackDetail,
+    _agent_provider: providerFromError(error),
+    _agent_model: modelFromError(error),
+  } as T;
 }
 
 export async function runJsonAgent<T extends Record<string, unknown>>({
@@ -178,14 +262,18 @@ export async function runJsonAgent<T extends Record<string, unknown>>({
   fallback,
 }: RunJsonAgentOptions): Promise<T> {
   try {
-    const raw = await runAgentText(role, `${task}
+    const result = await runAgentText(role, `${task}
 
 CONTEXT:
 ${JSON.stringify(context, null, 2)}
 
 Return STRICTLY valid JSON. Do not wrap it in markdown.`);
 
-    const parsed = parseJsonObject<T>(raw, fallback as T);
+    const parsed = parseJsonObject<T>(result.text, fallback as T);
+    Object.assign(parsed, {
+      _agent_provider: result.provider,
+      _agent_model: result.model,
+    });
     if (parsed?._fallback_reason) {
       console.warn(`[AGENTS] ${role} returned fallback output:`, parsed._fallback_reason);
     }
@@ -195,7 +283,7 @@ Return STRICTLY valid JSON. Do not wrap it in markdown.`);
   }
 }
 
-async function runAgentText(role: AgentRole, input: string): Promise<string> {
+async function runAgentText(role: AgentRole, input: string): Promise<AgentTextResult> {
   const openAiKey = configuredSecret(Deno.env.get("OPENAI_API_KEY") ?? Deno.env.get("OPEN_AI_KEY"));
   const geminiKey = configuredSecret(Deno.env.get("GEMINI_API_KEY"));
   const groqKey = configuredSecret(Deno.env.get("GROQ_API_KEY"));
@@ -210,15 +298,24 @@ async function runAgentText(role: AgentRole, input: string): Promise<string> {
   });
 
   if (openAiKey) {
+    const model = Deno.env.get("OPENAI_MODEL") ?? DEFAULT_MODEL;
     try {
-      return await runAgentSdk(role, input, openAiKey);
+      return {
+        text: await runAgentSdk(role, input, openAiKey),
+        provider: "openai",
+        model,
+      };
     } catch (error) {
       console.warn("[AGENTS] OpenAI SDK unavailable, trying HTTP:", error);
       lastError = error;
     }
 
     try {
-      return await runAgentHttp(role, input, openAiKey, "openai");
+      return {
+        text: await runAgentHttp(role, input, openAiKey, "openai", true, model),
+        provider: "openai",
+        model,
+      };
     } catch (error) {
       console.warn("[AGENTS] OpenAI HTTP failed:", error);
       lastError = error;
@@ -226,17 +323,40 @@ async function runAgentText(role: AgentRole, input: string): Promise<string> {
   }
 
   if (geminiKey) {
-    try {
-      return await runAgentHttp(role, input, geminiKey, "gemini");
-    } catch (error) {
-      console.warn("[AGENTS] Gemini HTTP failed:", error);
-      lastError = error;
+    const primaryModel = Deno.env.get("GEMINI_MODEL") ?? DEFAULT_GEMINI_MODEL;
+    const configuredFallbackModels = envStringList("GEMINI_FALLBACK_MODELS");
+    const fallbackModels = configuredFallbackModels.length
+      ? configuredFallbackModels
+      : DEFAULT_GEMINI_FALLBACK_MODELS;
+    const models = uniqueStrings([primaryModel, ...fallbackModels]);
+
+    for (const model of models) {
+      try {
+        return {
+          text: await runAgentHttp(role, input, geminiKey, "gemini", true, model),
+          provider: "gemini",
+          model,
+        };
+      } catch (error) {
+        console.warn("[AGENTS] Gemini HTTP failed:", {
+          model,
+          detail: sanitizeAgentError(error),
+          error,
+        });
+        lastError = error;
+        if (!shouldTryNextGeminiModel(error)) break;
+      }
     }
   }
 
   if (groqKey && (!geminiKey || groqFallbackEnabled)) {
+    const model = Deno.env.get("GROQ_MODEL") ?? DEFAULT_GROQ_MODEL;
     try {
-      return await runAgentHttp(role, input, groqKey, "groq");
+      return {
+        text: await runAgentHttp(role, input, groqKey, "groq", true, model),
+        provider: "groq",
+        model,
+      };
     } catch (error) {
       console.warn("[AGENTS] Groq HTTP failed:", error);
       lastError = error;
@@ -272,13 +392,14 @@ async function runAgentHttp(
   apiKey: string,
   provider: HttpAgentProvider,
   useJsonMode = true,
+  modelOverride?: string,
 ) {
   const config = AGENTS[role];
-  const model = provider === "groq"
+  const model = modelOverride ?? (provider === "groq"
     ? Deno.env.get("GROQ_MODEL") ?? DEFAULT_GROQ_MODEL
     : provider === "gemini"
       ? Deno.env.get("GEMINI_MODEL") ?? DEFAULT_GEMINI_MODEL
-      : Deno.env.get("OPENAI_MODEL") ?? DEFAULT_MODEL;
+      : Deno.env.get("OPENAI_MODEL") ?? DEFAULT_MODEL);
   const url = provider === "groq"
     ? "https://api.groq.com/openai/v1/chat/completions"
     : provider === "gemini"
@@ -314,7 +435,7 @@ async function runAgentHttp(
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") {
-      throw new Error(`Erro ${provider}: timeout after ${timeoutMs}ms`);
+      throw new AgentProviderError(provider, model, `Erro ${provider}: timeout after ${timeoutMs}ms`);
     }
     throw error;
   } finally {
@@ -331,10 +452,15 @@ async function runAgentHttp(
       (lowerError.includes("response_format") || lowerError.includes("json_object"))
     ) {
       console.warn(`[AGENTS] ${provider} JSON mode unsupported, retrying without response_format.`);
-      return runAgentHttp(role, input, apiKey, provider, false);
+      return runAgentHttp(role, input, apiKey, provider, false, model);
     }
 
-    throw new Error(`Erro ${provider}: ${response.status} - ${errorText}`);
+    throw new AgentProviderError(
+      provider,
+      model,
+      `Erro ${provider}: ${response.status} - ${errorText}`,
+      response.status,
+    );
   }
 
   const data = await response.json();
