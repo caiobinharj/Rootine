@@ -69,16 +69,20 @@ serve(async (req: Request) => {
 
     const { data: impactRows, error } = await supabaseAdmin
       .from("impact_ledger")
-      .select("user_id, impact, logged_at")
+      .select("user_id, impact, logged_at, source_type")
       .order("logged_at", { ascending: false })
       .limit(5000);
 
     if (error) throw new Error(`Erro ao buscar impacto comunitário: ${error.message}`);
 
+    const presentationRows = (impactRows ?? []).filter((row: any) =>
+      row.source_type === "presentation_seed"
+    );
+    const aggregateRows = presentationRows.length > 0 ? presentationRows : impactRows ?? [];
     const communityTotals = emptyImpactTotals();
     const totalsByUser = new Map<string, ImpactTotals>();
 
-    for (const row of impactRows ?? []) {
+    for (const row of aggregateRows) {
       const rowUserId = typeof row.user_id === "string" ? row.user_id : "";
       if (!rowUserId) continue;
       const userTotals = totalsByUser.get(rowUserId) ?? emptyImpactTotals();
@@ -107,7 +111,8 @@ serve(async (req: Request) => {
     return jsonResponse({
       success: true,
       participant_count: participantCount,
-      ledger_count: impactRows?.length ?? 0,
+      ledger_count: aggregateRows.length,
+      presentation_seed_active: presentationRows.length > 0,
       community_totals: roundImpactTotals(communityTotals),
       user_totals: roundImpactTotals(userTotals),
       user_rank: userRank,

@@ -16,7 +16,7 @@ import {
   requireUserIdFromJwt,
 } from "../_shared/supabase-admin.ts";
 import {
-  awardXpLedger,
+  awardXpWithDailyMissionCompletionLimit,
   getMissionXpReward,
   logMissionImpact,
   unlockEligibleAchievements,
@@ -24,6 +24,7 @@ import {
 
 const BRAIN_SCHEMA_VERSION = 1;
 const BRAIN_ALGORITHM_VERSION = "deterministic_brain_v1";
+const DAILY_COMPLETED_MISSION_XP_LIMIT = 4;
 
 type EventType = "BATCH_COMPLETED" | "MISSION_ACTION" | "FEEDBACK_SENT" | "QUIZ_COMPLETED";
 type ProfileEventType = EventType | "FLASHCARD_ANSWERED";
@@ -76,6 +77,8 @@ interface ProcessResult {
   notes: string[];
   xp?: unknown;
   impact?: unknown;
+  suppressAchievements?: boolean;
+  achievementSuppressionReason?: string;
 }
 
 function emptyAffinities() {
@@ -705,22 +708,35 @@ async function processMissionAction(
 
   let xp: unknown = null;
   let impact: unknown = null;
+  let suppressAchievements = false;
+  let achievementSuppressionReason: string | undefined;
   if (action === "completed") {
     const xpReward = getMissionXpReward(mission.difficulty);
-    xp = await awardXpLedger(supabaseAdmin, {
+    xp = await awardXpWithDailyMissionCompletionLimit(supabaseAdmin, {
       userId,
       sourceType: "mission_completed",
       sourceId: missionId,
       reason: `Missao concluida dificuldade ${numberValue(mission.difficulty, 1)}`,
       requestedXp: xpReward,
       idempotencyKey: `mission_completed:${missionId}`,
+      completedMissionId: missionId,
+      completedAt: occurredAt,
+      dailyCompletionLimit: DAILY_COMPLETED_MISSION_XP_LIMIT,
       metadata: {
         mission_type: mission.mission_type ?? "daily",
         category: mission.category ?? null,
         difficulty: mission.difficulty ?? null,
         pattern_key: mission.pattern_key ?? null,
+        daily_completed_mission_xp_limit: DAILY_COMPLETED_MISSION_XP_LIMIT,
       },
     });
+    suppressAchievements = Boolean(
+      (xp as { capped?: unknown; alreadyAwarded?: unknown })?.capped === true &&
+        (xp as { alreadyAwarded?: unknown })?.alreadyAwarded !== true,
+    );
+    achievementSuppressionReason = suppressAchievements
+      ? "daily_completed_mission_xp_limit"
+      : undefined;
     impact = await logMissionImpact(supabaseAdmin, { userId, mission });
   }
 
@@ -732,10 +748,13 @@ async function processMissionAction(
       `action:${action}`,
       `hard_block:false`,
       action === "completed" ? "xp_checked:true" : "xp_checked:false",
+      suppressAchievements ? "achievement_xp_suppressed:daily_completed_mission_xp_limit" : "achievement_xp_suppressed:false",
       action === "completed" ? "impact_checked:true" : "impact_checked:false",
     ],
     xp,
     impact,
+    suppressAchievements,
+    achievementSuppressionReason,
   };
 }
 
@@ -1024,7 +1043,15 @@ serve(async (req: Request) => {
       userId,
       profile.socioeconomic_context,
     );
-    const achievements = await unlockEligibleAchievements(supabaseAdmin, userId, "sync-user-brain");
+    const achievements = processResult.suppressAchievements
+      ? {
+        unlocked: [],
+        unlocked_xp: 0,
+        metrics: null,
+        suppressed: true,
+        suppression_reason: processResult.achievementSuppressionReason ?? "daily_completed_mission_xp_limit",
+      }
+      : await unlockEligibleAchievements(supabaseAdmin, userId, "sync-user-brain");
 
     console.log("[BRAIN] Agregação concluída.", {
       userId,

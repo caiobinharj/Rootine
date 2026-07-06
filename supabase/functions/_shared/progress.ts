@@ -87,6 +87,12 @@ function startOfUtcDay(date = new Date()) {
   return `${date.toISOString().slice(0, 10)}T00:00:00.000Z`;
 }
 
+function endOfUtcDay(date = new Date()) {
+  const start = new Date(startOfUtcDay(date));
+  start.setUTCDate(start.getUTCDate() + 1);
+  return start.toISOString();
+}
+
 function startOfUtcWeek(date = new Date()) {
   const day = new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
   const diff = (day.getUTCDay() + 6) % 7;
@@ -367,6 +373,98 @@ export async function awardXpWithDailyCap(
     ...result,
     capped: xpGranted < requestedXp,
   }));
+}
+
+export async function awardXpWithDailyMissionCompletionLimit(
+  supabaseAdmin: SupabaseLike,
+  input: {
+    userId: string;
+    sourceType: string;
+    sourceId?: string | null;
+    reason: string;
+    requestedXp: number;
+    idempotencyKey: string;
+    completedMissionId: string;
+    completedAt?: string | null;
+    dailyCompletionLimit: number;
+    metadata?: Record<string, unknown>;
+  },
+): Promise<XpAwardResult> {
+  const existing = await getExistingXpAward(supabaseAdmin, input.userId, input.idempotencyKey);
+  if (existing) {
+    const totalXp = await recalculateProfileXp(supabaseAdmin, input.userId);
+    const level = getLevelFromXp(totalXp);
+    return {
+      xpGranted: numberValue(existing.xp_delta, 0),
+      capped: false,
+      alreadyAwarded: true,
+      ledgerId: existing.id,
+      totalXp,
+      level: level.level,
+    };
+  }
+
+  const requestedXp = Math.max(0, Math.floor(input.requestedXp));
+  if (requestedXp <= 0) {
+    const totalXp = await recalculateProfileXp(supabaseAdmin, input.userId);
+    const level = getLevelFromXp(totalXp);
+    return { xpGranted: 0, capped: false, alreadyAwarded: false, ledgerId: null, totalXp, level: level.level };
+  }
+
+  const completedDate = input.completedAt ? new Date(input.completedAt) : new Date();
+  const dayStart = Number.isFinite(completedDate.getTime())
+    ? startOfUtcDay(completedDate)
+    : startOfUtcDay();
+  const dayEnd = Number.isFinite(completedDate.getTime())
+    ? endOfUtcDay(completedDate)
+    : endOfUtcDay();
+
+  const { data: completedRows, error: completedError } = await supabaseAdmin
+    .from("user_missions")
+    .select("id")
+    .eq("user_id", input.userId)
+    .eq("status", "completed")
+    .gte("completed_at", dayStart)
+    .lt("completed_at", dayEnd)
+    .neq("id", input.completedMissionId);
+
+  if (completedError) {
+    throw new Error(`Erro ao consultar limite diario de missoes concluidas: ${completedError.message}`);
+  }
+
+  const completedTodayBefore = completedRows?.length ?? 0;
+  const limit = Math.max(0, Math.floor(input.dailyCompletionLimit));
+
+  if (completedTodayBefore >= limit) {
+    const totalXp = await recalculateProfileXp(supabaseAdmin, input.userId);
+    const level = getLevelFromXp(totalXp);
+    console.log("[XP] Limite diario de missoes concluidas aplicado.", {
+      userId: input.userId,
+      source_type: input.sourceType,
+      source_id: input.sourceId ?? null,
+      idempotency_key: input.idempotencyKey,
+      requested_xp: requestedXp,
+      daily_completion_limit: limit,
+      completed_today_before: completedTodayBefore,
+      total_xp: totalXp,
+    });
+    return { xpGranted: 0, capped: true, alreadyAwarded: false, ledgerId: null, totalXp, level: level.level };
+  }
+
+  return awardXpLedger(supabaseAdmin, {
+    userId: input.userId,
+    sourceType: input.sourceType,
+    sourceId: input.sourceId,
+    reason: input.reason,
+    requestedXp,
+    idempotencyKey: input.idempotencyKey,
+    metadata: {
+      ...(input.metadata ?? {}),
+      daily_completion_limit: limit,
+      completed_today_before: completedTodayBefore,
+      capped: false,
+    },
+  });
 }
 
 function rangeFromMid(mid: number, confidence: number) {

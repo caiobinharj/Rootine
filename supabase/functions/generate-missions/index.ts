@@ -14,6 +14,7 @@ const RECENT_DAYS = 14;
 const HARD_REPEAT_DAYS = 3;
 const HARD_REPEAT_MISSION_LIMIT = 12;
 const MAX_ACTIVE_MISSIONS = 4;
+const DAILY_COMPLETED_MISSION_AI_LIMIT = 4;
 const MAX_AI_BLUEPRINTS = 8;
 const MIN_AI_CANDIDATES = 3;
 const MAX_AI_CANDIDATES = 4;
@@ -201,6 +202,16 @@ function timeBudgetFromProfile(profile: Record<string, unknown>, missionType: Mi
 
 function missionWindowDays(missionType: MissionType) {
   return missionType === "specialized" ? 7 : 1;
+}
+
+function startOfUtcDay(date = new Date()) {
+  return `${date.toISOString().slice(0, 10)}T00:00:00.000Z`;
+}
+
+function endOfUtcDay(date = new Date()) {
+  const start = new Date(startOfUtcDay(date));
+  start.setUTCDate(start.getUTCDate() + 1);
+  return start.toISOString();
 }
 
 function normalizeClientRequestId(value: unknown) {
@@ -1777,10 +1788,13 @@ serve(async (req: Request) => {
     }
 
     const recentSince = new Date(Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000).toISOString();
+    const todayStart = startOfUtcDay();
+    const todayEnd = endOfUtcDay();
     const [
       { data: rawFacts, error: factsError },
       { data: recentMissions, error: recentError },
       { data: patterns, error: patternsError },
+      { data: completedTodayMissions, error: completedTodayError },
     ] = await Promise.all([
       supabaseAdmin
         .from("user_profile_facts")
@@ -1800,11 +1814,22 @@ serve(async (req: Request) => {
         .from("mission_patterns")
         .select("*")
         .eq("active", true),
+      supabaseAdmin
+        .from("user_missions")
+        .select("id")
+        .eq("user_id", userId)
+        .eq("status", "completed")
+        .eq("delivery_status", "delivered")
+        .gte("completed_at", todayStart)
+        .lt("completed_at", todayEnd),
     ]);
 
     if (factsError) throw new Error(`Erro ao buscar fatos: ${factsError.message}`);
     if (recentError) throw new Error(`Erro ao buscar histórico de missões: ${recentError.message}`);
     if (patternsError) throw new Error(`Erro ao buscar mission_patterns: ${patternsError.message}`);
+    if (completedTodayError) {
+      throw new Error(`Erro ao buscar missões concluídas hoje: ${completedTodayError.message}`);
+    }
 
     let facts = ((rawFacts ?? []) as ProfileFact[])
       .filter((fact) => fact.active !== false);
@@ -1827,6 +1852,8 @@ serve(async (req: Request) => {
     const maxCost = maxCostFromProfile(profile);
     const timeBudget = timeBudgetFromProfile(profile, missionType);
     const userLevel = getLevelFromXp(profile.xp);
+    const completedMissionsToday = completedTodayMissions?.length ?? 0;
+    const deterministicOnlyByDailyLimit = completedMissionsToday >= DAILY_COMPLETED_MISSION_AI_LIMIT;
     const recentPatternKeys = new Set(
       (recentMissions ?? [])
         .map((mission: any) => mission.pattern_key)
@@ -1955,6 +1982,9 @@ serve(async (req: Request) => {
         max_cost: maxCost,
         time_budget_minutes: timeBudget,
         daily_flashcards_completed: Boolean(profile.daily_flashcards_completed),
+        completed_missions_today: completedMissionsToday,
+        daily_completed_mission_ai_limit: DAILY_COMPLETED_MISSION_AI_LIMIT,
+        deterministic_only_by_daily_completion_limit: deterministicOnlyByDailyLimit,
       },
       facts: {
         count: facts.length,
@@ -2009,7 +2039,7 @@ serve(async (req: Request) => {
       if (blueprints.length >= MAX_AI_BLUEPRINTS) break;
     }
 
-    const aiComposition = blueprints.length
+    const aiComposition = blueprints.length && !deterministicOnlyByDailyLimit
       ? await composeMissionCandidatesWithAi(blueprints, {
         user_level: userLevel,
         max_difficulty: maxDifficulty,
@@ -2034,8 +2064,12 @@ serve(async (req: Request) => {
       : {
         candidates: [] as MissionCandidate[],
         usedAi: false,
-        fallbackReason: "no_valid_blueprint_after_filters",
-        fallbackDetail: "no_valid_blueprint_after_filters",
+        fallbackReason: deterministicOnlyByDailyLimit
+          ? "daily_completed_mission_ai_limit"
+          : "no_valid_blueprint_after_filters",
+        fallbackDetail: deterministicOnlyByDailyLimit
+          ? `completed_missions_today:${completedMissionsToday};limit:${DAILY_COMPLETED_MISSION_AI_LIMIT}`
+          : "no_valid_blueprint_after_filters",
         aiProvider: null,
         aiModel: null,
       };
@@ -2339,6 +2373,9 @@ serve(async (req: Request) => {
         missionType,
         generationRequestId,
         activeMissionCount,
+        completedMissionsToday,
+        dailyCompletedMissionAiLimit: DAILY_COMPLETED_MISSION_AI_LIMIT,
+        deterministicOnlyByDailyLimit,
         selectedPatternKey: selectedPattern.key,
         selectedActionFingerprint: finalCandidate.action_fingerprint,
         usedFallback,
@@ -2372,6 +2409,9 @@ serve(async (req: Request) => {
       fallbackDetail: usedFallback
         ? aiComposition.fallbackDetail ?? finalFallbackReason ?? "deterministic_contextual_fallback"
         : null,
+      completedMissionsToday,
+      dailyCompletedMissionAiLimit: DAILY_COMPLETED_MISSION_AI_LIMIT,
+      deterministicOnlyByDailyLimit,
       candidateCount: aiAttemptCount,
       blueprintCount: blueprints.length,
 	      aiCandidateCount: aiComposition.candidates.length,
@@ -2404,6 +2444,9 @@ serve(async (req: Request) => {
 	      blueprint_count: blueprints.length,
 	      validation_error_count: validationErrors.length,
 	      validation_error_summary: summarizeValidationErrors(validationErrors),
+        daily_completed_mission_count: completedMissionsToday,
+        daily_completed_mission_ai_limit: DAILY_COMPLETED_MISSION_AI_LIMIT,
+        deterministic_due_to_daily_completion_limit: deterministicOnlyByDailyLimit,
         message: "cached_mission_created",
       });
     }
@@ -2429,6 +2472,9 @@ serve(async (req: Request) => {
 	      blueprint_count: blueprints.length,
 	      validation_error_count: validationErrors.length,
 	      validation_error_summary: summarizeValidationErrors(validationErrors),
+        daily_completed_mission_count: completedMissionsToday,
+        daily_completed_mission_ai_limit: DAILY_COMPLETED_MISSION_AI_LIMIT,
+        deterministic_due_to_daily_completion_limit: deterministicOnlyByDailyLimit,
 	      message: "mission_created",
 	    });
   } catch (error: any) {

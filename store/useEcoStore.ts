@@ -298,6 +298,10 @@ function buildMissionGenerationDebug(
     blueprintCount: data?.blueprint_count ?? null,
     validationErrorCount: data?.validation_error_count ?? null,
     validationErrorSummary: data?.validation_error_summary ?? null,
+    dailyCompletedMissionCount: data?.daily_completed_mission_count ?? null,
+    dailyCompletedMissionAiLimit: data?.daily_completed_mission_ai_limit ?? null,
+    deterministicDueToDailyCompletionLimit:
+      data?.deterministic_due_to_daily_completion_limit === true,
     usedCache,
     cacheStatus,
     cachePrefetchedAt: data?.cache_prefetched_at ?? null,
@@ -557,6 +561,9 @@ export const useEcoStore = create<EcoState>((set, get) => ({
         blueprintCount: data?.blueprint_count,
         validationErrorCount: data?.validation_error_count,
         validationErrorSummary: data?.validation_error_summary,
+        dailyCompletedMissionCount: data?.daily_completed_mission_count,
+        dailyCompletedMissionAiLimit: data?.daily_completed_mission_ai_limit,
+        deterministicDueToDailyCompletionLimit: data?.deterministic_due_to_daily_completion_limit,
       });
 
       if (data?.message === "max_missions_reached") {
