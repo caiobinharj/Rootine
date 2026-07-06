@@ -10,6 +10,8 @@ type ImpactTotals = {
 
 type MissionType = "daily" | "specialized";
 
+const DAILY_REWARDED_MISSION_LIMIT = 4;
+
 type ProgressEvent = {
   source: "mission_completed";
   missionId: string;
@@ -19,6 +21,13 @@ type ProgressEvent = {
   achievementCount: number;
   pending: boolean;
   createdAt: string;
+};
+
+type MissionRewardLimitState = {
+  completedToday: number;
+  rewardLimit: number;
+  reached: boolean;
+  resetAt: string;
 };
 
 // Tipagens baseadas no nosso esquema do Supabase
@@ -52,6 +61,7 @@ interface EcoState {
     total: ImpactTotals;
   };
   missions: Mission[];
+  missionRewardLimit: MissionRewardLimitState;
   loading: boolean;
   lastError: string | null;
   lastNotice: string | null;
@@ -60,6 +70,7 @@ interface EcoState {
 
   // Ações
   fetchProfile: (userId: string) => Promise<void>;
+  fetchMissionRewardLimit: (userId: string) => Promise<MissionRewardLimitState>;
   fetchPendingMissions: (userId: string, missionType?: MissionType) => Promise<void>;
   generateMissions: (userId: string, missionType?: MissionType) => Promise<void>;
   completeMission: (missionId: string) => Promise<void>;
@@ -74,6 +85,34 @@ interface EcoState {
 
 function isMissionExpired(mission: Pick<Mission, "expires_at">) {
   return Boolean(mission.expires_at && new Date(mission.expires_at).getTime() <= Date.now());
+}
+
+function startOfUtcDay(date = new Date()) {
+  return `${date.toISOString().slice(0, 10)}T00:00:00.000Z`;
+}
+
+function endOfUtcDay(date = new Date()) {
+  const start = new Date(startOfUtcDay(date));
+  start.setUTCDate(start.getUTCDate() + 1);
+  return start.toISOString();
+}
+
+function defaultMissionRewardLimitState(): MissionRewardLimitState {
+  return {
+    completedToday: 0,
+    rewardLimit: DAILY_REWARDED_MISSION_LIMIT,
+    reached: false,
+    resetAt: endOfUtcDay(),
+  };
+}
+
+function missionRewardLimitNotice(resetAt?: string) {
+  const reset = resetAt ? new Date(resetAt) : new Date(endOfUtcDay());
+  const resetText = reset.toLocaleTimeString("pt-BR", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+  return `Você atingiu o limite diário de ${DAILY_REWARDED_MISSION_LIMIT} missões recompensáveis. Ainda é possível gerar e concluir novas missões hoje, mas elas não darão XP até o reset das ${resetText}.`;
 }
 
 function buildFeedbackNotes(text: string, source: "user_feedback" | "mission_edit" = "user_feedback") {
@@ -410,6 +449,7 @@ export const useEcoStore = create<EcoState>((set, get) => ({
     total: emptyImpactTotals(),
   },
   missions: [],
+  missionRewardLimit: defaultMissionRewardLimitState(),
   loading: false,
   lastError: null,
   lastNotice: null,
@@ -441,6 +481,40 @@ export const useEcoStore = create<EcoState>((set, get) => ({
         impactPeriods,
       });
     }
+  },
+
+  fetchMissionRewardLimit: async (userId: string) => {
+    const dayStart = startOfUtcDay();
+    const dayEnd = endOfUtcDay();
+    const { count, error } = await supabase
+      .from("user_missions")
+      .select("id", { count: "exact", head: true })
+      .eq("user_id", userId)
+      .eq("status", "completed")
+      .eq("delivery_status", "delivered")
+      .gte("completed_at", dayStart)
+      .lt("completed_at", dayEnd);
+
+    if (error) {
+      console.error("[TRILHA] Erro ao consultar limite diário de XP:", error.message);
+      const fallbackState = {
+        ...get().missionRewardLimit,
+        resetAt: dayEnd,
+        rewardLimit: DAILY_REWARDED_MISSION_LIMIT,
+      };
+      set({ missionRewardLimit: fallbackState });
+      return fallbackState;
+    }
+
+    const completedToday = count ?? 0;
+    const limitState = {
+      completedToday,
+      rewardLimit: DAILY_REWARDED_MISSION_LIMIT,
+      reached: completedToday >= DAILY_REWARDED_MISSION_LIMIT,
+      resetAt: dayEnd,
+    };
+    set({ missionRewardLimit: limitState });
+    return limitState;
   },
 
   fetchPendingMissions: async (userId: string, missionType?: MissionType) => {
@@ -492,6 +566,7 @@ export const useEcoStore = create<EcoState>((set, get) => ({
       set({ missions: activeMissions, lastError: null });
       scheduleMissionCacheForGaps(userId, activeMissions, missionType);
     }
+    await get().fetchMissionRewardLimit(userId);
     set({ loading: false });
   },
 
@@ -582,7 +657,9 @@ export const useEcoStore = create<EcoState>((set, get) => ({
       await get().fetchPendingMissions(userId);
       set((state) => ({
         lastError: null,
-        lastNotice: null,
+        lastNotice: data?.deterministic_due_to_daily_completion_limit === true
+          ? missionRewardLimitNotice(get().missionRewardLimit.resetAt)
+          : state.lastNotice,
         pendingGenerationRequestIds: {
           ...state.pendingGenerationRequestIds,
           [missionType]: undefined,
@@ -698,7 +775,9 @@ export const useEcoStore = create<EcoState>((set, get) => ({
     }
 
     const mission = get().missions.find((item) => item.id === missionId);
-    const optimisticMissionXp = Number(mission?.xp_reward ?? 0) || 0;
+    const optimisticMissionXp = get().missionRewardLimit.reached
+      ? 0
+      : Number(mission?.xp_reward ?? 0) || 0;
     set((state) => ({
       missions: state.missions.filter((item) => item.id !== missionId),
       lastError: null,
@@ -751,6 +830,7 @@ export const useEcoStore = create<EcoState>((set, get) => ({
       const missionXp = Number(syncData?.xp?.xpGranted ?? mission?.xp_reward ?? 0) || 0;
       const achievementXp = Number(syncData?.achievements?.unlocked_xp ?? 0) || 0;
       const achievementCount = Number(syncData?.achievements?.unlocked?.length ?? 0) || 0;
+      const xpCapped = syncData?.xp?.capped === true;
 
       console.log("[XP] Missão concluída processada:", {
         missionId,
@@ -759,6 +839,7 @@ export const useEcoStore = create<EcoState>((set, get) => ({
         totalXp: missionXp + achievementXp,
         impact: syncData?.impact ? "registered" : "none",
         achievements: achievementCount,
+        xpCapped,
       });
 
       set({
@@ -778,6 +859,10 @@ export const useEcoStore = create<EcoState>((set, get) => ({
         get().fetchProfile(user.id),
         get().fetchPendingMissions(user.id),
       ]);
+      const rewardLimit = get().missionRewardLimit;
+      if (rewardLimit.reached) {
+        set({ lastNotice: missionRewardLimitNotice(rewardLimit.resetAt) });
+      }
     })().catch(async (error) => {
       console.error("[TRILHA] Erro ao sincronizar conclusão de missão:", error);
       const message = await getFunctionErrorMessage(error);

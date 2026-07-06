@@ -20,6 +20,7 @@ interface MissionCardProps {
   helpText?: string | null;
   xp: number;
   expiresAt: string;
+  rewardDisabled?: boolean;
 }
 
 function sanitizeJustification(value: string) {
@@ -70,6 +71,7 @@ export default function MissionCard({
   helpText,
   xp,
   expiresAt,
+  rewardDisabled = false,
 }: MissionCardProps) {
   const { theme } = useRootineTheme();
   const categoryColor =
@@ -105,7 +107,9 @@ export default function MissionCard({
             <TouchableOpacity onPress={() => setEditModalVisible(true)} style={styles.editButton}>
               <Text style={styles.editText}>Editar</Text>
             </TouchableOpacity>
-            <Text style={styles.xpText}>+{xp} XP missão</Text>
+            <Text style={[styles.xpText, rewardDisabled && styles.xpTextDisabled]}>
+              {rewardDisabled ? "Sem XP hoje" : `+${xp} XP missão`}
+            </Text>
           </View>
         </View>
 
@@ -247,6 +251,7 @@ const createStyles = (theme: RootineTheme, categoryColor: string) =>
     overflow: "hidden",
   },
   xpText: { color: theme.colors.info, fontWeight: "800", fontSize: 14 },
+  xpTextDisabled: { color: theme.colors.textMuted },
   cardTitle: {
     fontSize: 20,
     fontWeight: "800",

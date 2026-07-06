@@ -28,11 +28,13 @@ export default function AdventureScreen() {
   const {
     missions,
     fetchPendingMissions,
+    fetchMissionRewardLimit,
     generateMissions,
     loading,
     lastError,
     lastNotice,
     lastProgressEvent,
+    missionRewardLimit,
     clearProgressEvent,
     clearLastError,
     clearLastNotice,
@@ -43,6 +45,7 @@ export default function AdventureScreen() {
   const [generatingMissionType, setGeneratingMissionType] = useState<MissionType | null>(null);
   const [generationStartedAt, setGenerationStartedAt] = useState<number | null>(null);
   const [generationProgress, setGenerationProgress] = useState(0);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   const loadMissions = useCallback(async () => {
     const {
@@ -77,6 +80,13 @@ export default function AdventureScreen() {
     const timeoutId = setTimeout(clearLastNotice, 5200);
     return () => clearTimeout(timeoutId);
   }, [clearLastNotice, lastNotice]);
+
+  useEffect(() => {
+    if (!missionRewardLimit.reached) return undefined;
+    setNowMs(Date.now());
+    const intervalId = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(intervalId);
+  }, [missionRewardLimit.reached]);
 
   useEffect(() => {
     if (!generatingMissionType || !generationStartedAt) {
@@ -122,6 +132,42 @@ export default function AdventureScreen() {
       : generationProgress < 0.84
         ? "Compondo uma missão concreta"
         : "Validando impacto e segurança";
+  const rewardResetMs = new Date(missionRewardLimit.resetAt).getTime();
+  const rewardResetRemainingMs = Math.max(
+    0,
+    Number.isFinite(rewardResetMs) ? rewardResetMs - nowMs : 0,
+  );
+  const rewardResetHours = Math.floor(rewardResetRemainingMs / 3_600_000);
+  const rewardResetMinutes = Math.floor((rewardResetRemainingMs % 3_600_000) / 60_000);
+  const rewardResetSeconds = Math.floor((rewardResetRemainingMs % 60_000) / 1000);
+  const rewardResetCountdown = `${String(rewardResetHours).padStart(2, "0")}:${String(rewardResetMinutes).padStart(2, "0")}:${String(rewardResetSeconds).padStart(2, "0")}`;
+
+  useEffect(() => {
+    if (!userId || !missionRewardLimit.reached || rewardResetRemainingMs > 0) return;
+    void fetchMissionRewardLimit(userId);
+  }, [
+    fetchMissionRewardLimit,
+    missionRewardLimit.reached,
+    rewardResetRemainingMs,
+    userId,
+  ]);
+
+  const rewardLimitCard = missionRewardLimit.reached ? (
+    <View style={styles.rewardLimitCard}>
+      <View style={styles.rewardLimitHeader}>
+        <View style={styles.rewardLimitCopy}>
+          <Text style={styles.rewardLimitTitle}>Limite diário de XP atingido</Text>
+          <Text style={styles.rewardLimitText}>
+            Você concluiu {missionRewardLimit.completedToday} missões hoje. Novas missões continuam disponíveis, mas não recompensam XP até o reset diário.
+          </Text>
+        </View>
+        <View style={styles.rewardCountdownBox}>
+          <Text style={styles.rewardCountdownLabel}>reset em</Text>
+          <Text style={styles.rewardCountdownValue}>{rewardResetCountdown}</Text>
+        </View>
+      </View>
+    </View>
+  ) : null;
   const generationProgressPanel = generatingMissionType ? (
     <View style={styles.generationPanel}>
       <View style={styles.generationHeader}>
@@ -212,16 +258,19 @@ export default function AdventureScreen() {
         data={missions}
         keyExtractor={(item) => item.id}
         ListHeaderComponent={
-          <View style={styles.sectionSummary}>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{dailyMissions.length}</Text>
-              <Text style={styles.summaryLabel}>diárias</Text>
+          <>
+            {rewardLimitCard}
+            <View style={styles.sectionSummary}>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>{dailyMissions.length}</Text>
+                <Text style={styles.summaryLabel}>diárias</Text>
+              </View>
+              <View style={styles.summaryItem}>
+                <Text style={styles.summaryValue}>{specializedMissions.length}</Text>
+                <Text style={styles.summaryLabel}>semanais</Text>
+              </View>
             </View>
-            <View style={styles.summaryItem}>
-              <Text style={styles.summaryValue}>{specializedMissions.length}</Text>
-              <Text style={styles.summaryLabel}>semanais</Text>
-            </View>
-          </View>
+          </>
         }
         renderItem={({ item }) => (
           <MissionCard
@@ -235,6 +284,7 @@ export default function AdventureScreen() {
             helpText={item.ai_justification?.help_text || null}
             expiresAt={item.expires_at}
             xp={item.xp_reward ?? (item.mission_type === "specialized" ? 25 : 10)}
+            rewardDisabled={missionRewardLimit.reached}
           />
         )}
         ListEmptyComponent={
@@ -258,7 +308,9 @@ export default function AdventureScreen() {
             </TouchableOpacity>
           </View>
           <Text style={styles.progressText}>
-            +{lastProgressEvent.missionXp} XP da missão
+            {lastProgressEvent.missionXp > 0
+              ? `+${lastProgressEvent.missionXp} XP da missão`
+              : "Limite diário aplicado: esta missão não gerou XP"}
             {lastProgressEvent.achievementXp > 0
               ? ` + ${lastProgressEvent.achievementXp} XP de ${lastProgressEvent.achievementCount} conquista(s)`
               : ""}
@@ -383,6 +435,59 @@ const createStyles = (theme: RootineTheme) =>
       color: theme.colors.textMuted,
       fontSize: 12,
       lineHeight: 17,
+    },
+    rewardLimitCard: {
+      backgroundColor: theme.colors.infoSoft,
+      borderWidth: 1,
+      borderColor: theme.colors.info,
+      borderRadius: 8,
+      padding: 14,
+      marginTop: 8,
+      marginBottom: 8,
+    },
+    rewardLimitHeader: {
+      flexDirection: "row",
+      flexWrap: "wrap",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    rewardLimitCopy: {
+      flex: 1,
+      minWidth: 220,
+    },
+    rewardLimitTitle: {
+      color: theme.colors.info,
+      fontWeight: "800",
+      fontSize: 15,
+    },
+    rewardLimitText: {
+      color: theme.colors.text,
+      marginTop: 5,
+      lineHeight: 20,
+      fontSize: 13,
+    },
+    rewardCountdownBox: {
+      minWidth: 104,
+      alignItems: "center",
+      backgroundColor: theme.colors.transparentSurface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      borderRadius: 8,
+      paddingHorizontal: 10,
+      paddingVertical: 8,
+    },
+    rewardCountdownLabel: {
+      color: theme.colors.textMuted,
+      fontSize: 10,
+      fontWeight: "800",
+      textTransform: "uppercase",
+    },
+    rewardCountdownValue: {
+      color: theme.colors.info,
+      fontSize: 18,
+      fontWeight: "800",
+      marginTop: 2,
     },
     sectionSummary: {
       flexDirection: "row",
