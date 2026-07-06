@@ -1,7 +1,7 @@
 import { HabitatScene } from "@/components/HabitatScene";
 import { RootineTheme } from "@/constants/rootine-theme";
 import { useRootineTheme } from "@/hooks/useRootineTheme";
-import { getLevelFromXp } from "@/lib/domain/xp";
+import { getLevelFromXp, getXpMinimumForLevel, XP_LEVEL_THRESHOLDS } from "@/lib/domain/xp";
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
 import { useFocusEffect } from "expo-router";
@@ -52,7 +52,10 @@ export default function HabitatScreen() {
   const [leaves, setLeaves] = useState<HabitatLeaf[]>(FALLBACK_LEAVES);
   const [selectedLeaf, setSelectedLeaf] = useState<HabitatLeaf | null>(null);
   const [loadingLeaves, setLoadingLeaves] = useState(false);
+  const [isDeveloper, setIsDeveloper] = useState(false);
+  const [previewLevel, setPreviewLevel] = useState<number | null>(null);
   const levelInfo = getLevelFromXp(xp || 0);
+  const previewXp = previewLevel === null ? null : getXpMinimumForLevel(previewLevel);
 
   const impactPulse = Math.min(
     45,
@@ -68,10 +71,10 @@ export default function HabitatScreen() {
       Math.round((xp > 0 ? 20 : 8) + levelInfo.progress * 35 + impactPulse),
     ),
   );
-  const displayXp = xp || 0;
-  const displayLevelInfo = levelInfo;
+  const displayXp = previewXp ?? xp ?? 0;
+  const displayLevelInfo = previewXp === null ? levelInfo : getLevelFromXp(displayXp);
   const displayVisualLevel = displayLevelInfo.level + displayLevelInfo.progress;
-  const displayVitalityScore = vitalityScore;
+  const displayVitalityScore = previewLevel === null ? vitalityScore : 82;
   const displayVitalityLabel = getVitalityLabel(displayVitalityScore);
   const xpToNext = Math.max(0, displayLevelInfo.xpNext - displayXp);
 
@@ -87,6 +90,19 @@ export default function HabitatScreen() {
       console.log("[HABITAT] Perfil do Habitat carregado:", {
         userId: user.id,
       });
+
+      const { data: profileRole, error: roleError } = await supabase
+        .from("profiles")
+        .select("role")
+        .eq("id", user.id)
+        .maybeSingle();
+
+      if (roleError) {
+        console.warn("[HABITAT] Não foi possível verificar cargo:", roleError.message);
+        setIsDeveloper(false);
+      } else {
+        setIsDeveloper(profileRole?.role === "developer");
+      }
 
       const { data, error } = await supabase.functions.invoke("habitat-leaves", {
         body: { userId: user.id },
@@ -127,6 +143,7 @@ export default function HabitatScreen() {
           vitalityScore={displayVitalityScore}
           vitalityLabel={displayVitalityLabel}
           loadingLeaves={loadingLeaves}
+          previewXp={previewXp ?? undefined}
         />
 
         <View style={styles.progressPanel}>
@@ -152,6 +169,54 @@ export default function HabitatScreen() {
             {displayXp} XP acumulados · faltam {xpToNext} XP para o próximo marco
           </Text>
         </View>
+
+        {isDeveloper ? (
+          <View style={styles.devPanel}>
+            <View style={styles.devHeader}>
+              <View style={styles.levelCopy}>
+                <Text style={styles.panelEyebrow}>Prévia da árvore</Text>
+                <Text style={styles.devTitle}>
+                  {previewLevel === null
+                    ? "Conta real"
+                    : `Nível ${displayLevelInfo.level} · ${displayLevelInfo.milestone}`}
+                </Text>
+              </View>
+              <TouchableOpacity
+                style={[styles.devResetButton, previewLevel === null && styles.devButtonActive]}
+                onPress={() => setPreviewLevel(null)}
+              >
+                <Text style={[styles.devResetText, previewLevel === null && styles.devButtonActiveText]}>
+                  Real
+                </Text>
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.levelSelector}
+            >
+              {XP_LEVEL_THRESHOLDS.map((entry) => {
+                const active = previewLevel === entry.level;
+                return (
+                  <TouchableOpacity
+                    key={entry.level}
+                    style={[styles.levelButton, active && styles.devButtonActive]}
+                    onPress={() => setPreviewLevel(entry.level)}
+                    activeOpacity={0.82}
+                  >
+                    <Text style={[styles.levelButtonNumber, active && styles.devButtonActiveText]}>
+                      {entry.level}
+                    </Text>
+                    <Text style={[styles.levelButtonLabel, active && styles.devButtonActiveText]}>
+                      {entry.milestone}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+            </ScrollView>
+          </View>
+        ) : null}
       </ScrollView>
 
       <Modal visible={!!selectedLeaf} transparent animationType="fade">
@@ -255,6 +320,76 @@ const createStyles = (theme: RootineTheme) =>
       marginTop: 8,
       fontWeight: "700",
       lineHeight: 18,
+    },
+    devPanel: {
+      marginHorizontal: 20,
+      marginTop: 12,
+      backgroundColor: theme.colors.surfaceRaised,
+      borderRadius: 8,
+      padding: 14,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      gap: 12,
+    },
+    devHeader: {
+      flexDirection: "row",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 12,
+    },
+    devTitle: {
+      color: theme.colors.text,
+      fontSize: 15,
+      fontWeight: "800",
+      marginTop: 4,
+    },
+    devResetButton: {
+      borderRadius: 999,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 12,
+      paddingVertical: 8,
+      backgroundColor: theme.colors.surface,
+    },
+    devResetText: {
+      color: theme.colors.primaryStrong,
+      fontSize: 12,
+      fontWeight: "800",
+    },
+    levelSelector: {
+      gap: 8,
+      paddingRight: 4,
+    },
+    levelButton: {
+      width: 112,
+      minHeight: 62,
+      borderRadius: 8,
+      backgroundColor: theme.colors.surface,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      paddingHorizontal: 10,
+      paddingVertical: 9,
+      justifyContent: "center",
+    },
+    devButtonActive: {
+      backgroundColor: theme.colors.primary,
+      borderColor: theme.colors.primaryStrong,
+    },
+    devButtonActiveText: {
+      color: theme.colors.textOnPrimary,
+    },
+    levelButtonNumber: {
+      color: theme.colors.primaryStrong,
+      fontSize: 17,
+      fontWeight: "900",
+      lineHeight: 20,
+    },
+    levelButtonLabel: {
+      color: theme.colors.textMuted,
+      fontSize: 11,
+      fontWeight: "800",
+      lineHeight: 15,
+      marginTop: 2,
     },
     modalOverlay: {
       flex: 1,
