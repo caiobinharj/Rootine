@@ -5,10 +5,11 @@ import { useRootineTheme } from "@/hooks/useRootineTheme";
 import { getLevelFromXp } from "@/lib/domain/xp";
 import { supabase } from "@/lib/supabase";
 import { useEcoStore } from "@/store/useEcoStore";
-import { useFocusEffect } from "expo-router";
+import { useFocusEffect, useRouter } from "expo-router";
 import React, { useCallback, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  Alert,
   ScrollView,
   StyleSheet,
   Text,
@@ -257,6 +258,33 @@ export default function ProfileScreen() {
   const [factActionLoading, setFactActionLoading] = useState<string | null>(null);
   const [factHelpVisible, setFactHelpVisible] = useState(false);
   const { xp, fetchProfile } = useEcoStore();
+  const router = useRouter();
+    const [logoutLoading, setLogoutLoading] = useState(false);
+
+  const handleLogout = async () => {
+    Alert.alert(
+      "Sair da conta",
+      "Tem certeza que deseja sair?",
+      [
+        { text: "Cancelar", style: "cancel" },
+        {
+          text: "Sair",
+          style: "destructive",
+          onPress: async () => {
+            setLoading(true);
+            try {
+              await supabase.auth.signOut();
+              router.replace("/auth");
+            } catch (error) {
+              Alert.alert("Erro", "Não foi possível sair. Tente novamente.");
+            } finally {
+              setLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  };
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -680,6 +708,19 @@ export default function ProfileScreen() {
           ) : null}
         </View>
       )}
+      <View style={styles.logoutContainer}>
+          <TouchableOpacity
+            style={styles.logoutButton}
+            onPress={handleLogout}
+            disabled={logoutLoading}
+          >
+            {logoutLoading ? (
+              <ActivityIndicator color={theme.colors.textOnPrimary} size="small" />
+            ) : (
+              <Text style={styles.logoutText}>Sair da conta</Text>
+            )}
+          </TouchableOpacity>
+        </View>
 
       </ScrollView>
     </View>
@@ -966,4 +1007,22 @@ const createStyles = (theme: RootineTheme) =>
     factButton: { backgroundColor: theme.colors.surfaceMuted, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 7 },
     factButtonText: { color: theme.colors.textMuted, fontWeight: "700", fontSize: 11 },
     emptyText: { color: theme.colors.textSubtle, lineHeight: 20 },
+    logoutContainer: {
+      marginHorizontal: 20,
+      marginTop: 30,
+      borderTopWidth: 1,
+      borderTopColor: theme.colors.border,
+      paddingTop: 20,
+    },
+    logoutButton: {
+      backgroundColor: theme.colors.danger, // ou theme.colors.error (certifique-se de que existe)
+      paddingVertical: 14,
+      borderRadius: 999,
+      alignItems: "center",
+    },
+    logoutText: {
+      color: theme.colors.textOnPrimary,
+      fontWeight: "800",
+      fontSize: 16,
+    },
   });
