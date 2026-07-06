@@ -15,7 +15,7 @@ import {
   TouchableOpacity,
   View,
 } from "react-native";
-import { z } from "zod"; // ← adicionado
+import { z } from "zod/v4";
 
 // Esquema de validação para cadastro
 const signUpSchema = z
