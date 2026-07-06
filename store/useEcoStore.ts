@@ -258,6 +258,62 @@ function missionPrefetchKey(userId: string, missionType: MissionType) {
   return `${userId}:${missionType}`;
 }
 
+function originalMissionGenerationSource(data: any) {
+  if (typeof data?.cache_generation_source === "string") return data.cache_generation_source;
+  if (data?.used_fallback === true) return "deterministic_fallback";
+  if (data?.ai_used === true) return "ai";
+  if (data?.idempotent === true) return "existing_idempotent_mission";
+  return "unknown";
+}
+
+function missionCacheStatus(data: any) {
+  if (data?.used_cache === true) return "claimed";
+  if (data?.cached === true && data?.message === "cached_mission_already_ready") return "already_ready";
+  if (data?.cached === true || data?.prefetched === true) return "prepared";
+  return "not_used";
+}
+
+function buildMissionGenerationDebug(
+  missionType: MissionType,
+  data: any,
+  startedAt?: number,
+) {
+  const usedCache = data?.used_cache === true;
+  const cacheStatus = missionCacheStatus(data);
+  const cacheGenerationSource = originalMissionGenerationSource(data);
+
+  return {
+    missionType,
+    source: usedCache ? "mission_cache" : cacheGenerationSource,
+    cacheGenerationSource: cacheStatus === "not_used" ? null : cacheGenerationSource,
+    aiUsed: data?.ai_used === true,
+    usedFallback: data?.used_fallback === true,
+    fallbackReason: data?.fallback_reason ?? null,
+    fallbackDetail: data?.fallback_detail ?? null,
+    aiProvider: data?.ai_provider ?? null,
+    aiModel: data?.ai_model ?? null,
+    aiStage: data?.ai_stage ?? null,
+    candidateCount: data?.candidate_count ?? null,
+    aiCandidateCount: data?.ai_candidate_count ?? null,
+    blueprintCount: data?.blueprint_count ?? null,
+    validationErrorCount: data?.validation_error_count ?? null,
+    validationErrorSummary: data?.validation_error_summary ?? null,
+    usedCache,
+    cacheStatus,
+    cachePrefetchedAt: data?.cache_prefetched_at ?? null,
+    cacheClaimedAt: data?.cache_claimed_at ?? null,
+    cacheAgeMs: data?.cache_age_ms ?? null,
+    idempotent: data?.idempotent === true,
+    idempotencyStatus: data?.idempotent === true
+      ? "reused_existing_request"
+      : "created_new_request",
+    elapsedMs: typeof startedAt === "number" ? Date.now() - startedAt : null,
+    clientRequestId: data?.client_request_id ?? null,
+    missionId: data?.mission_id ?? null,
+    message: data?.message ?? null,
+  };
+}
+
 function prefetchMissionCache(userId: string, missionType: MissionType) {
   const key = missionPrefetchKey(userId, missionType);
   const existing = missionPrefetchPromises.get(key);
@@ -277,13 +333,12 @@ function prefetchMissionCache(userId: string, missionType: MissionType) {
         return;
       }
 
-      console.log("[MISSION_GEN] Missão em cache:", {
-        missionType,
-        message: data?.message,
-        missionId: data?.mission_id,
-        aiUsed: data?.ai_used,
-        usedFallback: data?.used_fallback,
-      });
+      const prefetchDebug = buildMissionGenerationDebug(missionType, data);
+      if (prefetchDebug.usedFallback) {
+        console.warn("[MISSION_GEN] Missão em cache preparada via fallback determinístico", prefetchDebug);
+      } else {
+        console.log("[MISSION_GEN] Missão em cache preparada", prefetchDebug);
+      }
     })
     .catch((error) => {
       console.warn("[MISSION_GEN] Falha no prefetch de missão:", {
@@ -469,37 +524,7 @@ export const useEcoStore = create<EcoState>((set, get) => ({
 
       if (error) throw error;
 
-      const generationSource = data?.used_cache
-        ? "mission_cache"
-        : data?.used_fallback
-          ? "deterministic_fallback"
-          : data?.ai_used
-            ? "ai"
-            : data?.idempotent
-              ? "existing_idempotent_mission"
-              : "unknown";
-      const idempotencyStatus = data?.idempotent === true
-        ? "reused_existing_request"
-        : "created_new_request";
-      const generationDebug = {
-        missionType,
-        source: generationSource,
-        aiUsed: data?.ai_used === true,
-        usedFallback: data?.used_fallback === true,
-        fallbackReason: data?.fallback_reason ?? null,
-        fallbackDetail: data?.fallback_detail ?? null,
-        aiProvider: data?.ai_provider ?? null,
-        aiModel: data?.ai_model ?? null,
-        aiCandidateCount: data?.ai_candidate_count ?? null,
-        blueprintCount: data?.blueprint_count ?? null,
-        validationErrorCount: data?.validation_error_count ?? null,
-        validationErrorSummary: data?.validation_error_summary ?? null,
-        usedCache: data?.used_cache === true,
-        idempotent: data?.idempotent === true,
-        idempotencyStatus,
-        elapsedMs: Date.now() - startedAt,
-        clientRequestId: data?.client_request_id,
-      };
+      const generationDebug = buildMissionGenerationDebug(missionType, data, startedAt);
 
       if (data?.used_cache) {
         console.log("[MISSION_GEN] Origem da geração: missão pré-gerada em cache", generationDebug);
@@ -514,13 +539,23 @@ export const useEcoStore = create<EcoState>((set, get) => ({
         success: data?.success,
         message: data?.message,
         idempotent: data?.idempotent,
-        idempotencyStatus,
+        idempotencyStatus: generationDebug.idempotencyStatus,
         clientRequestId: data?.client_request_id,
         aiUsed: data?.ai_used,
         usedFallback: data?.used_fallback,
         usedCache: data?.used_cache,
+        cacheGenerationSource: data?.cache_generation_source,
+        cacheStatus: generationDebug.cacheStatus,
+        cacheAgeMs: data?.cache_age_ms,
         fallbackReason: data?.fallback_reason,
         fallbackDetail: data?.fallback_detail,
+        aiProvider: data?.ai_provider,
+        aiModel: data?.ai_model,
+        aiStage: data?.ai_stage,
+        candidateCount: data?.candidate_count,
+        aiCandidateCount: data?.ai_candidate_count,
+        blueprintCount: data?.blueprint_count,
+        validationErrorCount: data?.validation_error_count,
         validationErrorSummary: data?.validation_error_summary,
       });
 

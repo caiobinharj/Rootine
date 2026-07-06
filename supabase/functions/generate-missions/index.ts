@@ -221,7 +221,7 @@ async function findMissionByGenerationRequest(
 
   const { data, error } = await supabaseAdmin
     .from("user_missions")
-    .select("id, status, mission_type, category, pattern_key, action_fingerprint, generation_snapshot")
+    .select("id, status, mission_type, category, pattern_key, action_fingerprint, generation_snapshot, cache_metadata, delivery_status, claimed_at, created_at")
     .eq("user_id", userId)
     .eq("generation_request_id", generationRequestId)
     .maybeSingle();
@@ -1468,14 +1468,45 @@ function generationAiDebug(snapshot: unknown) {
   const ai = asObject(asObject(snapshot).ai);
   return {
     ai_used: ai.ai_used === true,
+    ai_stage: typeof ai.ai_stage === "string" ? ai.ai_stage : null,
     used_fallback: Boolean(ai.fallback_reason),
     fallback_reason: typeof ai.fallback_reason === "string" ? ai.fallback_reason : null,
     fallback_detail: typeof ai.fallback_detail === "string" ? ai.fallback_detail : null,
     ai_provider: typeof ai.ai_provider === "string" ? ai.ai_provider : null,
     ai_model: typeof ai.ai_model === "string" ? ai.ai_model : null,
+    candidate_count: numberValue(ai.candidate_count, 0),
     ai_candidate_count: numberValue(ai.ai_candidate_count, 0),
     blueprint_count: numberValue(ai.blueprint_count, 0),
     validation_error_count: numberValue(ai.validation_error_count, 0),
+    validation_error_summary: typeof ai.validation_error_summary === "string"
+      ? ai.validation_error_summary
+      : null,
+  };
+}
+
+function generationSourceFromAiDebug(aiDebug: ReturnType<typeof generationAiDebug>) {
+  if (aiDebug.used_fallback) return "deterministic_fallback";
+  if (aiDebug.ai_used) return "ai";
+  return "unknown";
+}
+
+function missionCacheDebug(mission: any, aiDebug: ReturnType<typeof generationAiDebug>) {
+  const cacheMetadata = asObject(mission?.cache_metadata);
+  const prefetchedAt = typeof cacheMetadata.prefetched_at === "string"
+    ? cacheMetadata.prefetched_at
+    : null;
+  const claimedAt = typeof cacheMetadata.claimed_at === "string"
+    ? cacheMetadata.claimed_at
+    : typeof mission?.claimed_at === "string"
+      ? mission.claimed_at
+      : null;
+  const prefetchedMs = prefetchedAt ? new Date(prefetchedAt).getTime() : NaN;
+
+  return {
+    cache_generation_source: generationSourceFromAiDebug(aiDebug),
+    cache_prefetched_at: prefetchedAt,
+    cache_claimed_at: claimedAt,
+    cache_age_ms: Number.isFinite(prefetchedMs) ? Math.max(0, Date.now() - prefetchedMs) : null,
   };
 }
 
@@ -1490,6 +1521,7 @@ function missionResponseFromRow(
   },
 ) {
   const aiDebug = generationAiDebug(mission?.generation_snapshot);
+  const cacheDebug = input.usedCache === true ? missionCacheDebug(mission, aiDebug) : {};
   return {
     success: true,
     mission_id: mission?.id,
@@ -1502,6 +1534,7 @@ function missionResponseFromRow(
     idempotent: input.idempotent === true,
     used_cache: input.usedCache === true,
     ...aiDebug,
+    ...cacheDebug,
     message: input.message,
   };
 }
@@ -1662,18 +1695,12 @@ serve(async (req: Request) => {
         missionId: existingMissionForRequest.id,
       });
 
-      return jsonResponse({
-        success: true,
-        mission_id: existingMissionForRequest.id,
-        pattern_key: existingMissionForRequest.pattern_key ?? null,
-        action_fingerprint: existingMissionForRequest.action_fingerprint ?? null,
-        category: existingMissionForRequest.category ?? null,
-        mission_status: existingMissionForRequest.status,
-        mission_type: existingMissionForRequest.mission_type ?? missionType,
-        client_request_id: generationRequestId,
+      return jsonResponse(missionResponseFromRow(existingMissionForRequest, {
+        missionType,
+        generationRequestId,
         idempotent: true,
         message: "mission_already_created",
-      });
+      }));
     }
 
     const { data: profile, error: profileError } = await supabaseAdmin
@@ -1741,6 +1768,10 @@ serve(async (req: Request) => {
           mission_id: existingCachedMission.id,
           mission_type: missionType,
           ...generationAiDebug(existingCachedMission.generation_snapshot),
+          ...missionCacheDebug(
+            existingCachedMission,
+            generationAiDebug(existingCachedMission.generation_snapshot),
+          ),
         });
       }
     }
@@ -2181,6 +2212,7 @@ serve(async (req: Request) => {
         blueprint_count: blueprints.length,
         ai_candidate_count: aiComposition.candidates.length,
         validation_error_count: validationErrors.length,
+        validation_error_summary: summarizeValidationErrors(validationErrors),
       },
     };
 
@@ -2240,6 +2272,12 @@ serve(async (req: Request) => {
         mission_id: existingCachedMission?.id ?? null,
         mission_type: missionType,
         ...(existingCachedMission ? generationAiDebug(existingCachedMission.generation_snapshot) : {}),
+        ...(existingCachedMission
+          ? missionCacheDebug(
+            existingCachedMission,
+            generationAiDebug(existingCachedMission.generation_snapshot),
+          )
+          : {}),
       });
     }
 
